@@ -1,0 +1,142 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Bull",
+  "projectDescription": "Premium queue package for handling distributed jobs and messages in Node.js",
+  "theme": "aspen",
+  "primaryColor": "#d32f2f",
+  "lightColor": "#ff6659",
+  "darkColor": "#9a0007",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quick-start"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/queues",
+              "concepts/jobs",
+              "concepts/processors",
+              "concepts/events",
+              "concepts/job-lifecycle"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/delayed-jobs",
+              "guides/repeatable-jobs",
+              "guides/rate-limiting",
+              "guides/priorities",
+              "guides/concurrency",
+              "guides/retries-backoff",
+              "guides/sandboxed-processors",
+              "guides/pause-resume",
+              "guides/redis-configuration"
+            ]
+          },
+          {
+            "group": "Patterns",
+            "pages": [
+              "patterns/message-queue",
+              "patterns/job-completion",
+              "patterns/reusing-connections",
+              "patterns/redis-cluster",
+              "patterns/custom-backoff",
+              "patterns/manual-fetching"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/queue-options",
+              "advanced/job-options",
+              "advanced/stalled-jobs",
+              "advanced/metrics",
+              "advanced/debugging"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Queue",
+            "pages": [
+              "api/queue/constructor",
+              "api/queue/process",
+              "api/queue/add",
+              "api/queue/pause-resume",
+              "api/queue/getters",
+              "api/queue/clean-obliterate",
+              "api/queue/repeatable",
+              "api/queue/events"
+            ]
+          },
+          {
+            "group": "Job",
+            "pages": [
+              "api/job/properties",
+              "api/job/progress",
+              "api/job/state-management",
+              "api/job/retry-promote",
+              "api/job/locking"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Migration & Support",
+            "pages": [
+              "resources/migration-guide",
+              "resources/ui-tools",
+              "resources/monitoring",
+              "resources/comparison",
+              "resources/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Redis-backed job queues with rock-solid stability",
+    "Delayed jobs and cron-based repeatable jobs",
+    "Rate limiting and priority queues",
+    "Automatic retries with customizable backoff strategies",
+    "Sandboxed processor functions in separate processes",
+    "Pause/resume functionality (global or local)",
+    "Rich event system for job lifecycle monitoring",
+    "Support for Redis clusters and connection reuse"
+  ],
+  "publicApiSurface": [
+    "Queue(name, url?, opts?)",
+    "Queue#process(name?, concurrency?, processor)",
+    "Queue#add(name?, data, opts?)",
+    "Queue#addBulk(jobs[])",
+    "Queue#pause(isLocal?)",
+    "Queue#resume(isLocal?)",
+    "Queue#getJobs(types, start?, end?)",
+    "Queue#clean(grace, status?, limit?)",
+    "Queue#obliterate(opts?)",
+    "Queue#on(event, handler)",
+    "Job#progress(value?)",
+    "Job#log(message)",
+    "Job#getState()",
+    "Job#retry()",
+    "Job#remove()",
+    "Events: completed, failed, progress, active, stalled, waiting, paused, resumed"
+  ]
+}
