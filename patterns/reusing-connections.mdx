@@ -1,0 +1,103 @@
+---
+title: 'Reusing Redis Connections'
+description: 'Share Redis connections across multiple queues to reduce connection count'
+---
+
+A standard queue requires **3 connections** to the Redis server. In some situations you might want to re-use connections—for example on Heroku where the connection count is restricted.
+
+You can do this with the `createClient` option in the `Queue` constructor.
+
+## Important Notes
+
+<Warning>
+  **bclient connections cannot be re-used**, so you should return a new connection each time this is called.
+</Warning>
+
+<Note>
+- Client and subscriber connections can be shared and will not be closed when the queue is closed
+- When shutting down the process, first close the queues, then the shared connections (if they are shared)
+- If you are not sharing connections but still using `createClient` for custom connection logic, you may need to keep a list of all connections to manually close them later for graceful shutdown
+- Do not set a `keyPrefix` on the connection you create—use Bull's built-in prefix feature if you need a key prefix
+</Note>
+
+## Implementation
+
+```js
+const { REDIS_URL } = process.env;
+
+const Redis = require('ioredis');
+let client;
+let subscriber;
+
+const opts = {
+  // redisOpts here will contain at least a property of connectionName which will identify the queue based on its name
+  createClient: function (type, redisOpts) {
+    switch (type) {
+      case 'client':
+        if (!client) {
+          client = new Redis(REDIS_URL, redisOpts);
+        }
+        return client;
+      case 'subscriber':
+        if (!subscriber) {
+          subscriber = new Redis(REDIS_URL, redisOpts);
+        }
+        return subscriber;
+      case 'bclient':
+        return new Redis(REDIS_URL, redisOpts);
+      default:
+        throw new Error('Unexpected connection type: ' + type);
+    }
+  }
+}
+
+const queueFoo = new Queue('foobar', opts);
+const queueQux = new Queue('quxbaz', opts);
+```
+
+## Connection Types
+
+<AccordionGroup>
+  <Accordion title="client" icon="database">
+    The main Redis client used for most queue operations. **Can be reused** across multiple queues.
+  </Accordion>
+  
+  <Accordion title="subscriber" icon="bell">
+    Used for subscribing to Redis pub/sub channels for event notifications. **Can be reused** across multiple queues.
+  </Accordion>
+  
+  <Accordion title="bclient" icon="lock">
+    The blocking client used for blocking operations. **Cannot be reused**—must return a new connection each time.
+  </Accordion>
+</AccordionGroup>
+
+## Connection Count Comparison
+
+<CardGroup cols={2}>
+  <Card title="Without Reusing" icon="circle-xmark">
+    2 queues = **6 connections**
+    
+    (3 connections per queue)
+  </Card>
+  <Card title="With Reusing" icon="circle-check">
+    2 queues = **4 connections**
+    
+    (1 shared client + 1 shared subscriber + 2 bclient)
+  </Card>
+</CardGroup>
+
+## Graceful Shutdown
+
+```js
+// Shutdown sequence
+await queueFoo.close();
+await queueQux.close();
+
+// Now close shared connections
+await client.quit();
+await subscriber.quit();
+```
+
+<Tip>
+This pattern is especially useful when working with platforms that have connection limits, such as Heroku or when using Redis services with connection-based pricing.
+</Tip>

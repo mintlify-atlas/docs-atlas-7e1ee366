@@ -1,0 +1,464 @@
+---
+title: "Clean, Empty, Obliterate & Close"
+description: "Remove jobs from the queue and manage queue lifecycle"
+---
+
+## Queue.clean()
+
+Removes jobs of a specific type that were created outside of a grace period.
+
+### Signature
+
+```ts
+clean(grace: number, status?: string, limit?: number): Promise<number[]>
+```
+
+### Parameters
+
+<ParamField path="grace" type="number" required>
+  Grace period in milliseconds. Jobs older than this will be removed.
+</ParamField>
+
+<ParamField path="status" type="string" default="'completed'">
+  Job status to clean. Valid values: `'completed'`, `'failed'`, `'delayed'`, `'active'`, `'waiting'`.
+</ParamField>
+
+<ParamField path="limit" type="number">
+  Maximum number of jobs to clean in this operation.
+</ParamField>
+
+### Returns
+
+<ResponseField name="jobIds" type="Promise<number[]>">
+  Array of removed job IDs.
+</ResponseField>
+
+### Examples
+
+#### Clean Completed Jobs
+
+```js
+// Remove completed jobs older than 5 seconds
+const removed = await queue.clean(5000);
+console.log(`Cleaned ${removed.length} completed jobs`);
+```
+
+#### Clean Failed Jobs
+
+```js
+// Remove failed jobs older than 10 seconds
+const removed = await queue.clean(10000, 'failed');
+console.log(`Cleaned ${removed.length} failed jobs`);
+```
+
+#### Clean with Limit
+
+```js
+// Clean max 100 jobs at a time
+const removed = await queue.clean(60000, 'completed', 100);
+console.log(`Cleaned ${removed.length} jobs (max 100)`);
+```
+
+#### Listen to Clean Events
+
+```js
+queue.on('cleaned', (jobs, type) => {
+  console.log(`Cleaned ${jobs.length} ${type} jobs`);
+});
+
+await queue.clean(5000, 'completed');
+```
+
+#### Scheduled Cleanup
+
+```js
+// Clean old jobs every hour
+setInterval(async () => {
+  // Remove completed jobs older than 24 hours
+  await queue.clean(24 * 60 * 60 * 1000, 'completed');
+  
+  // Remove failed jobs older than 7 days
+  await queue.clean(7 * 24 * 60 * 60 * 1000, 'failed');
+  
+  console.log('Cleanup completed');
+}, 60 * 60 * 1000);
+```
+
+#### Clean Multiple Statuses
+
+```js
+async function cleanOldJobs(graceMs) {
+  const statuses = ['completed', 'failed'];
+  
+  for (const status of statuses) {
+    const removed = await queue.clean(graceMs, status);
+    console.log(`Cleaned ${removed.length} ${status} jobs`);
+  }
+}
+
+await cleanOldJobs(24 * 60 * 60 * 1000); // 24 hours
+```
+
+---
+
+## Queue.empty()
+
+Drains the queue by deleting all waiting and delayed jobs.
+
+### Signature
+
+```ts
+empty(): Promise<void>
+```
+
+### Returns
+
+<ResponseField name="promise" type="Promise<void>">
+  A promise that resolves when the queue is emptied.
+</ResponseField>
+
+### Examples
+
+#### Empty the Queue
+
+```js
+await queue.empty();
+console.log('Queue emptied');
+```
+
+#### Reset Queue Before Tests
+
+```js
+beforeEach(async () => {
+  await queue.empty();
+});
+```
+
+#### Conditional Empty
+
+```js
+async function resetQueue() {
+  const waiting = await queue.getWaitingCount();
+  
+  if (waiting > 0) {
+    console.log(`Emptying ${waiting} waiting jobs`);
+    await queue.empty();
+  }
+}
+```
+
+### Important Notes
+
+<Warning>
+- Only removes **waiting** and **delayed** jobs
+- Does NOT remove active, completed, or failed jobs
+- Does NOT remove Repeatable Job configurations
+- Repeatable jobs will continue to be created on schedule
+</Warning>
+
+<Note>
+To remove other job statuses, use `clean()`. To remove everything including repeatable configurations, use `obliterate()`.
+</Note>
+
+---
+
+## Queue.obliterate()
+
+Completely removes a queue with all its data.
+
+### Signature
+
+```ts
+obliterate(opts?: { force: boolean }): Promise<void>
+```
+
+### Parameters
+
+<ParamField path="opts" type="object">
+  <ParamField path="force" type="boolean" default="false">
+    If true, obliterates the queue even if there are active jobs. If false, will fail if active jobs exist.
+  </ParamField>
+</ParamField>
+
+### Returns
+
+<ResponseField name="promise" type="Promise<void>">
+  A promise that resolves when the queue is obliterated.
+</ResponseField>
+
+### Examples
+
+#### Safe Obliterate
+
+```js
+try {
+  await queue.obliterate();
+  console.log('Queue obliterated');
+} catch (error) {
+  console.error('Cannot obliterate: active jobs exist');
+}
+```
+
+#### Force Obliterate
+
+```js
+// Remove everything, even with active jobs
+await queue.obliterate({ force: true });
+console.log('Queue forcefully obliterated');
+```
+
+#### Clean Shutdown and Remove
+
+```js
+async function removeQueue() {
+  // Pause to stop new jobs
+  await queue.pause();
+  
+  // Wait for active jobs
+  await queue.whenCurrentJobsFinished();
+  
+  // Now safe to obliterate
+  await queue.obliterate();
+  
+  console.log('Queue completely removed');
+}
+```
+
+#### Test Cleanup
+
+```js
+after(async () => {
+  await queue.obliterate({ force: true });
+});
+```
+
+### Important Notes
+
+<Warning>
+- Removes ALL jobs (waiting, active, delayed, completed, failed)
+- Removes ALL Repeatable Job configurations
+- Removes all queue metadata
+- **Cannot be undone**
+- Not atomic - performed iteratively
+</Warning>
+
+<Note>
+The queue is paused during obliteration. If another script unpauses the queue during this process, the call will fail and return the items it managed to remove.
+</Note>
+
+---
+
+## Queue.close()
+
+Closes the underlying Redis connections for graceful shutdown.
+
+### Signature
+
+```ts
+close(doNotWaitJobs?: boolean): Promise<void>
+```
+
+### Parameters
+
+<ParamField path="doNotWaitJobs" type="boolean" default="false">
+  If true, closes immediately without waiting for active jobs. If false, waits for active jobs to complete.
+</ParamField>
+
+### Returns
+
+<ResponseField name="promise" type="Promise<void>">
+  A promise that resolves when the queue is closed.
+</ResponseField>
+
+### Examples
+
+#### Basic Close
+
+```js
+await queue.close();
+console.log('Queue closed');
+```
+
+#### Close After Processing N Jobs
+
+```js
+const _ = require('lodash');
+
+const after100 = _.after(100, async function () {
+  await queue.close();
+  console.log('Processed 100 jobs, queue closed');
+});
+
+queue.on('completed', after100);
+```
+
+#### Close from Within Job Handler (Callback)
+
+```js
+queue.process((job, done) => {
+  if (shouldShutdown) {
+    queue.close(); // Call close first
+    done();        // Then complete the job
+  } else {
+    processJob(job, done);
+  }
+});
+```
+
+#### Close from Within Job Handler (Promise)
+
+```js
+queue.process(async (job) => {
+  if (shouldShutdown) {
+    queue.close(); // Close doesn't need to be awaited here
+  }
+  return await processJob(job);
+});
+```
+
+<Warning>
+**Important:** When closing from within a job handler, don't wait for `close()` to complete before finishing the job. The queue won't close until after the job completes.
+
+```js
+// WRONG - This won't work
+queue.process(async (job) => {
+  await processJob(job);
+  await queue.close(); // Will hang
+  return result;
+});
+
+// CORRECT
+queue.process(async (job) => {
+  await processJob(job);
+  queue.close(); // Don't await
+  return result;
+});
+```
+</Warning>
+
+#### Graceful Application Shutdown
+
+```js
+const queues = [queue1, queue2, queue3];
+
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, closing queues...');
+  
+  // Close all queues
+  await Promise.all(queues.map(q => q.close()));
+  
+  console.log('All queues closed');
+  process.exit(0);
+});
+```
+
+#### Close with Timeout
+
+```js
+async function closeWithTimeout(timeoutMs = 30000) {
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Close timeout')), timeoutMs);
+  });
+  
+  try {
+    await Promise.race([
+      queue.close(),
+      timeout
+    ]);
+    console.log('Queue closed gracefully');
+  } catch (error) {
+    console.log('Close timed out, forcing close');
+    await queue.close(true); // Force close
+  }
+}
+```
+
+#### Immediate Close
+
+```js
+// Close immediately without waiting for active jobs
+await queue.close(true);
+console.log('Queue closed immediately');
+```
+
+---
+
+## Comparison
+
+| Method | Waiting | Delayed | Active | Completed | Failed | Repeatable |
+|--------|---------|---------|--------|-----------|--------|------------|
+| `empty()` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `clean()` | ✅* | ✅* | ✅* | ✅* | ✅* | ❌ |
+| `obliterate()` | ✅ | ✅ | ✅** | ✅ | ✅ | ✅ |
+| `close()` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+*Only if status matches and outside grace period  
+**Only with `force: true`
+
+---
+
+## Common Patterns
+
+### Automated Cleanup Job
+
+```js
+// Create a cleanup queue that runs periodically
+const cleanupQueue = new Queue('cleanup');
+
+cleanupQueue.process(async () => {
+  const day = 24 * 60 * 60 * 1000;
+  
+  await queue.clean(day, 'completed');
+  await queue.clean(7 * day, 'failed');
+  
+  return { cleaned: true };
+});
+
+// Schedule cleanup daily
+await cleanupQueue.add({}, {
+  repeat: { cron: '0 2 * * *' } // 2 AM daily
+});
+```
+
+### Progressive Cleanup
+
+```js
+async function progressiveClean() {
+  const batchSize = 1000;
+  let total = 0;
+  
+  while (true) {
+    const removed = await queue.clean(24 * 60 * 60 * 1000, 'completed', batchSize);
+    
+    if (removed.length === 0) break;
+    
+    total += removed.length;
+    console.log(`Cleaned ${total} jobs so far...`);
+    
+    // Pause between batches to avoid Redis load
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  
+  console.log(`Total cleaned: ${total}`);
+}
+```
+
+### Safe Queue Removal
+
+```js
+async function safeRemoveQueue(queue) {
+  console.log('Pausing queue...');
+  await queue.pause();
+  
+  console.log('Waiting for jobs to finish...');
+  await queue.whenCurrentJobsFinished();
+  
+  console.log('Obliterating queue...');
+  await queue.obliterate();
+  
+  console.log('Closing connections...');
+  await queue.close();
+  
+  console.log('Queue removed successfully');
+}
+```

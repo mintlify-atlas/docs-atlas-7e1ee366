@@ -1,0 +1,102 @@
+---
+title: 'Job Completion Pattern'
+description: 'Handle job results in a scalable way using combined job and message queues'
+---
+
+A common pattern is where you have a cluster of queue processors that just process jobs as fast as they can, and some other services that need to take the result of these processors and do something with it, maybe storing results in a database.
+
+## The Pattern
+
+The most robust and scalable way to accomplish this is by **combining the standard job queue with the message queue pattern**:
+
+<Steps>
+  <Step title="Submit Jobs">
+    A service sends jobs to the cluster by opening a job queue and adding jobs to it
+  </Step>
+  <Step title="Process Jobs">
+    The cluster processes jobs as fast as it can
+  </Step>
+  <Step title="Send Results">
+    Every time a job gets completed in the cluster, a message is sent to a results message queue with the result data
+  </Step>
+  <Step title="Store Results">
+    A separate service listens to the results queue and stores the results in a database
+  </Step>
+</Steps>
+
+## Architecture
+
+```mermaid
+graph LR
+    A[Service] -->|Add Jobs| B[Job Queue]
+    B -->|Process| C[Worker Cluster]
+    C -->|Results| D[Results Queue]
+    D -->|Store| E[Database Service]
+```
+
+## Example Implementation
+
+<CodeGroup>
+
+```js Submitting Service
+const Queue = require('bull');
+
+const jobQueue = new Queue('jobs');
+
+// Submit jobs
+await jobQueue.add({ task: 'process-data', data: {...} });
+```
+
+```js Worker
+const Queue = require('bull');
+
+const jobQueue = new Queue('jobs');
+const resultsQueue = new Queue('results');
+
+jobQueue.process(async (job) => {
+  // Process the job
+  const result = await processData(job.data);
+  
+  // Send result to results queue
+  await resultsQueue.add({
+    jobId: job.id,
+    result: result
+  });
+  
+  return result;
+});
+```
+
+```js Results Service
+const Queue = require('bull');
+
+const resultsQueue = new Queue('results');
+
+resultsQueue.process(async (job) => {
+  // Store result in database
+  await database.save(job.data.jobId, job.data.result);
+});
+```
+
+</CodeGroup>
+
+## Benefits
+
+<CardGroup cols={2}>
+  <Card title="Scalability" icon="arrows-maximize">
+    Workers and result processors can scale independently
+  </Card>
+  <Card title="Decoupling" icon="puzzle-piece">
+    Job processing and result handling are separate concerns
+  </Card>
+  <Card title="Reliability" icon="check-double">
+    Results are guaranteed to be delivered and stored
+  </Card>
+  <Card title="Flexibility" icon="wand-magic-sparkles">
+    Multiple services can consume results from the same queue
+  </Card>
+</CardGroup>
+
+<Tip>
+This pattern is particularly useful in microservices architectures where you want to maintain loose coupling between services.
+</Tip>

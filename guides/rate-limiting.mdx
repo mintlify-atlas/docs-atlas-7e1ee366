@@ -1,0 +1,337 @@
+---
+title: Rate Limiting
+description: Control job processing rate to prevent overwhelming external services or APIs
+---
+
+Rate limiting allows you to control how many jobs are processed within a specific time window. This is essential when working with external APIs, preventing server overload, or managing resource-intensive operations.
+
+## Basic Configuration
+
+Configure rate limiting when creating a queue:
+
+```javascript
+const Queue = require('bull');
+
+const apiQueue = new Queue('api-calls', {
+  limiter: {
+    max: 5,        // Maximum number of jobs
+    duration: 1000 // Per time period in milliseconds
+  }
+});
+
+// This queue will process at most 5 jobs per second
+```
+
+## Rate Limiter Options
+
+The `RateLimiter` interface provides comprehensive rate limiting control:
+
+```typescript
+interface RateLimiter {
+  max: number;           // Max number of jobs processed
+  duration: number;      // Per duration in milliseconds
+  bounceBack?: boolean;  // When jobs get rate limited, they stay in waiting queue
+                        // (default: false, jobs moved to delayed queue)
+  groupKey?: string;     // Group jobs by key from job data for separate rate limits
+}
+```
+
+## Rate Limiting Modes
+
+<Tabs>
+  <Tab title="Default (Delayed)">
+    By default, rate-limited jobs are moved to the delayed queue:
+    
+    ```javascript
+    const queue = new Queue('api', {
+      limiter: {
+        max: 10,
+        duration: 60000  // 10 jobs per minute
+      }
+    });
+    
+    // When limit reached:
+    // - Additional jobs are delayed
+    // - They'll be processed when rate limit window resets
+    ```
+  </Tab>
+  
+  <Tab title="Bounce Back Mode">
+    With `bounceBack: true`, jobs stay in the waiting queue:
+    
+    ```javascript
+    const queue = new Queue('api', {
+      limiter: {
+        max: 10,
+        duration: 60000,
+        bounceBack: true  // Keep jobs in waiting queue
+      }
+    });
+    
+    // When limit reached:
+    // - Jobs remain in waiting state
+    // - Processed as soon as rate limit allows
+    // - Better for high-throughput scenarios
+    ```
+    
+    <Info>
+    Use `bounceBack: true` when you want rate-limited jobs to maintain their position in the queue rather than being delayed.
+    </Info>
+  </Tab>
+</Tabs>
+
+## Common Use Cases
+
+### API Rate Limits
+
+Respect third-party API rate limits:
+
+```javascript
+// GitHub API: 5000 requests per hour
+const githubQueue = new Queue('github-api', {
+  limiter: {
+    max: 5000,
+    duration: 3600000  // 1 hour in milliseconds
+  }
+});
+
+githubQueue.process(async (job) => {
+  const response = await fetch(`https://api.github.com/${job.data.endpoint}`);
+  return response.json();
+});
+
+// Add jobs freely - rate limiting is automatic
+for (const repo of repositories) {
+  await githubQueue.add({ endpoint: `repos/${repo}` });
+}
+```
+
+### Email Service Rate Limits
+
+```javascript
+// SendGrid: 100 emails per second on free tier
+const emailQueue = new Queue('emails', {
+  limiter: {
+    max: 100,
+    duration: 1000,
+    bounceBack: true  // Keep emails in waiting queue
+  }
+});
+
+emailQueue.process(async (job) => {
+  await sendEmail(job.data.to, job.data.subject, job.data.body);
+});
+```
+
+### Database Write Throttling
+
+```javascript
+// Prevent overwhelming database with writes
+const dbQueue = new Queue('database-writes', {
+  limiter: {
+    max: 50,           // 50 writes
+    duration: 1000     // Per second
+  }
+});
+
+dbQueue.process(async (job) => {
+  await database.insert(job.data);
+});
+```
+
+## Grouped Rate Limiting
+
+Apply different rate limits based on job data using `groupKey`:
+
+```javascript
+const queue = new Queue('multi-tenant-api', {
+  limiter: {
+    max: 10,
+    duration: 1000,
+    groupKey: 'userId'  // Rate limit per user
+  }
+});
+
+// Each user gets their own rate limit bucket
+await queue.add({ userId: 'user123', action: 'fetch' });
+await queue.add({ userId: 'user456', action: 'fetch' });
+
+// user123 and user456 each can make 10 requests/second
+```
+
+### Nested Group Keys
+
+You can use dot notation for nested properties:
+
+```javascript
+const queue = new Queue('api', {
+  limiter: {
+    max: 5,
+    duration: 1000,
+    groupKey: 'network.handle'  // Access nested property
+  }
+});
+
+await queue.add({
+  network: { handle: '@user1' },
+  action: 'post'
+});
+```
+
+<Note>
+The `groupKey` allows you to specify a key from the job's data object. Jobs with different values for this key will have separate rate limit counters.
+</Note>
+
+## Advanced Patterns
+
+### Dynamic Rate Limits by Priority
+
+```javascript
+// High priority jobs processed faster
+const priorityQueue = new Queue('priority-tasks', {
+  limiter: {
+    max: 20,
+    duration: 1000
+  }
+});
+
+// High priority - processed within rate limit
+await priorityQueue.add(
+  { task: 'urgent' },
+  { priority: 1 }
+);
+
+// Low priority - may be delayed if limit reached
+await priorityQueue.add(
+  { task: 'background' },
+  { priority: 10 }
+);
+```
+
+### Combining with Concurrency
+
+```javascript
+// Limit both rate AND concurrent processing
+const queue = new Queue('controlled-api', {
+  limiter: {
+    max: 100,          // 100 jobs
+    duration: 60000    // Per minute
+  }
+});
+
+// Process max 5 jobs concurrently
+queue.process(5, async (job) => {
+  return await processJob(job);
+});
+
+// This gives you:
+// - Max 100 jobs per minute (rate limit)
+// - Max 5 jobs processing simultaneously (concurrency)
+```
+
+<Info>
+Combining rate limiting with concurrency gives you fine-grained control over job processing, preventing both rate limit violations and resource exhaustion.
+</Info>
+
+## Monitoring Rate Limits
+
+```javascript
+const queue = new Queue('monitored-api', {
+  limiter: {
+    max: 10,
+    duration: 1000
+  }
+});
+
+// Monitor when jobs are delayed due to rate limits
+queue.on('waiting', (jobId) => {
+  console.log(`Job ${jobId} is waiting`);
+});
+
+queue.on('delayed', (job) => {
+  console.log(`Job ${job.id} delayed due to rate limit`);
+});
+
+queue.on('active', (job) => {
+  console.log(`Job ${job.id} processing now`);
+});
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Match external service limits">
+    Set your rate limits slightly below external API limits to account for request overhead:
+    
+    ```javascript
+    // API limit: 1000/hour
+    // Set Bull limit: 950/hour (5% buffer)
+    const queue = new Queue('safe-api', {
+      limiter: {
+        max: 950,
+        duration: 3600000
+      }
+    });
+    ```
+  </Step>
+  
+  <Step title="Use bounceBack for high throughput">
+    Enable `bounceBack` when processing large volumes of jobs:
+    
+    ```javascript
+    const queue = new Queue('high-volume', {
+      limiter: {
+        max: 1000,
+        duration: 1000,
+        bounceBack: true  // Better performance
+      }
+    });
+    ```
+  </Step>
+  
+  <Step title="Group by tenant or user">
+    Use `groupKey` for multi-tenant applications:
+    
+    ```javascript
+    const queue = new Queue('saas-api', {
+      limiter: {
+        max: 100,
+        duration: 60000,
+        groupKey: 'tenantId'  // Fair limits per tenant
+      }
+    });
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+Rate limiting is applied per queue instance. If you have multiple workers processing the same queue, the rate limit applies to each worker separately. For global rate limiting, consider using a shared counter in Redis.
+</Warning>
+
+<Tip>
+For APIs with multiple rate limit tiers (per second, per hour, per day), create separate queues for different time windows and chain them together.
+</Tip>
+
+## Testing Rate Limits
+
+```javascript
+const queue = new Queue('test-rate-limit', {
+  limiter: {
+    max: 5,
+    duration: 1000
+  }
+});
+
+// Add 10 jobs quickly
+for (let i = 0; i < 10; i++) {
+  await queue.add({ index: i });
+}
+
+// First 5 jobs process immediately
+// Next 5 jobs are rate-limited
+
+const waiting = await queue.getWaitingCount();
+const delayed = await queue.getDelayedCount();
+
+console.log(`Waiting: ${waiting}, Delayed: ${delayed}`);
+```

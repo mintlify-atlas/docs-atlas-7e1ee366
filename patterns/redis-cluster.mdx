@@ -1,0 +1,124 @@
+---
+title: 'Redis Cluster'
+description: 'Use Bull with Redis Cluster by leveraging hash tags'
+---
+
+Bull internals require atomic operations that span different keys. This behavior breaks Redis's rules for cluster configurations. However, it is still possible to use a cluster environment by using the proper Bull prefix option as a cluster **hash tag**.
+
+## Hash Tags
+
+Hash tags are used to guarantee that certain keys are placed in the same hash slot. A hash tag is defined with **brackets**. A key that has a substring inside brackets will use that substring to determine in which hash slot the key will be placed.
+
+<Info>
+Read more about hash tags in the [Redis Cluster Tutorial](https://redis.io/topics/cluster-tutorial).
+</Info>
+
+## Solution
+
+To make Bull compatible with Redis Cluster, use a queue prefix inside brackets.
+
+```js
+const queue = new Queue('cluster', {
+  prefix: '{myprefix}'
+});
+```
+
+## Multiple Queues
+
+If you use several queues in the same cluster, you should **use different prefixes** so that the queues are evenly placed in the cluster nodes.
+
+<CodeGroup>
+
+```js Queue 1
+const emailQueue = new Queue('emails', {
+  prefix: '{emails}'
+});
+```
+
+```js Queue 2
+const videoQueue = new Queue('videos', {
+  prefix: '{videos}'
+});
+```
+
+```js Queue 3
+const imageQueue = new Queue('images', {
+  prefix: '{images}'
+});
+```
+
+</CodeGroup>
+
+## How It Works
+
+<Steps>
+  <Step title="Define Hash Tag">
+    Wrap your prefix in curly braces: `{myprefix}`
+  </Step>
+  <Step title="Key Hashing">
+    Redis uses only the substring within brackets to determine the hash slot
+  </Step>
+  <Step title="Same Slot Guarantee">
+    All keys with the same hash tag are guaranteed to be in the same slot
+  </Step>
+  <Step title="Atomic Operations">
+    Bull can now perform atomic operations across keys in the same slot
+  </Step>
+</Steps>
+
+## Complete Example
+
+```js
+const Redis = require('ioredis');
+const Queue = require('bull');
+
+const cluster = new Redis.Cluster([
+  {
+    host: 'localhost',
+    port: 7000
+  },
+  {
+    host: 'localhost',
+    port: 7001
+  },
+  {
+    host: 'localhost',
+    port: 7002
+  }
+]);
+
+const queue = new Queue('my-queue', {
+  prefix: '{bull}',
+  createClient: function(type) {
+    switch(type) {
+      case 'client':
+        return cluster;
+      case 'subscriber':
+        return cluster.duplicate();
+      case 'bclient':
+        return cluster.duplicate();
+      default:
+        throw new Error('Unexpected connection type: ' + type);
+    }
+  }
+});
+```
+
+<Warning>
+**Critical**: Without hash tags, Bull will not work correctly with Redis Cluster because atomic operations will fail when they span keys in different slots.
+</Warning>
+
+## Key Distribution
+
+<CardGroup cols={2}>
+  <Card title="Single Prefix" icon="layer-group">
+    All queues with `{myprefix}` will be on the **same node**
+    
+    Good for: Single queue or queues that need to share atomic operations
+  </Card>
+  <Card title="Multiple Prefixes" icon="diagram-project">
+    Each unique prefix distributes to **different nodes**
+    
+    Good for: Load balancing across cluster nodes
+  </Card>
+</CardGroup>

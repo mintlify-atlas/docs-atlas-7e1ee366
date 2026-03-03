@@ -1,0 +1,480 @@
+---
+title: "Repeatable Jobs"
+description: "Manage repeatable job configurations and schedules"
+---
+
+## Overview
+
+Repeatable jobs are job configurations that create jobs on a recurring schedule. They are managed separately from regular jobs and require special methods to retrieve and remove them.
+
+<Note>
+Repeatable Job configurations are NOT regular jobs. They won't show up in `getJobs()` or other job getter methods.
+</Note>
+
+---
+
+## Queue.getRepeatableJobs()
+
+Returns an array of all Repeatable Job configurations in the queue.
+
+### Signature
+
+```ts
+getRepeatableJobs(start?: number, end?: number, asc?: boolean): Promise<RepeatableJob[]>
+```
+
+### Parameters
+
+<ParamField path="start" type="number" default="0">
+  Starting index for pagination (0-based).
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  Ending index for pagination (-1 means all).
+</ParamField>
+
+<ParamField path="asc" type="boolean" default="false">
+  If true, return results in ascending order.
+</ParamField>
+
+### Returns
+
+<ResponseField name="jobs" type="Promise<RepeatableJob[]>">
+  Array of repeatable job configuration objects.
+  
+  ```typescript
+  interface RepeatableJob {
+    key: string;          // Unique key for the repeatable job
+    name: string;         // Job name
+    id: number | string;  // Job ID
+    endDate: Date;        // When the job should stop repeating
+    tz: string;           // Timezone
+    cron: string;         // Cron expression
+    every: number;        // Repeat interval in milliseconds
+    next: number;         // Timestamp of next scheduled execution
+  }
+  ```
+</ResponseField>
+
+### Examples
+
+#### Get All Repeatable Jobs
+
+```js
+const repeatableJobs = await queue.getRepeatableJobs();
+
+console.log(`Found ${repeatableJobs.length} repeatable jobs`);
+
+repeatableJobs.forEach(job => {
+  console.log(`Job: ${job.name}`);
+  console.log(`  Key: ${job.key}`);
+  console.log(`  Cron: ${job.cron}`);
+  console.log(`  Next run: ${new Date(job.next)}`);
+});
+```
+
+#### Paginate Repeatable Jobs
+
+```js
+// Get first 10 repeatable jobs
+const page1 = await queue.getRepeatableJobs(0, 9);
+
+// Get next 10
+const page2 = await queue.getRepeatableJobs(10, 19);
+```
+
+#### Find Specific Repeatable Job
+
+```js
+const repeatableJobs = await queue.getRepeatableJobs();
+const found = repeatableJobs.find(job => job.name === 'daily-report');
+
+if (found) {
+  console.log(`Found job with key: ${found.key}`);
+}
+```
+
+#### List Job Schedules
+
+```js
+const jobs = await queue.getRepeatableJobs();
+
+console.log('Scheduled jobs:');
+jobs.forEach(job => {
+  if (job.cron) {
+    console.log(`  ${job.name}: ${job.cron} (${job.tz || 'UTC'})`);
+  } else if (job.every) {
+    console.log(`  ${job.name}: every ${job.every}ms`);
+  }
+});
+```
+
+---
+
+## Queue.removeRepeatable()
+
+Removes a Repeatable Job configuration by matching its name and repeat options.
+
+### Signature
+
+```ts
+removeRepeatable(name?: string, repeat: RepeatOpts): Promise<void>
+```
+
+### Parameters
+
+<ParamField path="name" type="string">
+  Name of the repeatable job to remove.
+</ParamField>
+
+<ParamField path="repeat" type="RepeatOpts" required>
+  The repeat options used when the job was created. Must match exactly.
+  
+  ```typescript
+  interface RepeatOpts {
+    cron?: string;
+    tz?: string;
+    startDate?: Date | string | number;
+    endDate?: Date | string | number;
+    limit?: number;
+    every?: number;
+    count?: number;
+  }
+  ```
+</ParamField>
+
+### Returns
+
+<ResponseField name="promise" type="Promise<void>">
+  A promise that resolves when the repeatable job is removed.
+</ResponseField>
+
+### Examples
+
+#### Remove by Name and Cron
+
+```js
+// Original job
+await queue.add('daily-report', { type: 'summary' }, {
+  repeat: {
+    cron: '0 3 * * *',
+    tz: 'America/New_York'
+  }
+});
+
+// Remove it - must match exactly
+await queue.removeRepeatable('daily-report', {
+  cron: '0 3 * * *',
+  tz: 'America/New_York'
+});
+
+console.log('Repeatable job removed');
+```
+
+#### Remove by Interval
+
+```js
+// Original job
+await queue.add('health-check', {}, {
+  repeat: { every: 60000 }
+});
+
+// Remove it
+await queue.removeRepeatable('health-check', {
+  every: 60000
+});
+```
+
+#### Remove with Job ID
+
+```js
+// Original job
+await queue.add('backup', { db: 'production' }, {
+  jobId: 'daily-backup',
+  repeat: { cron: '0 2 * * *' }
+});
+
+// Remove it
+await queue.removeRepeatable('backup', {
+  cron: '0 2 * * *'
+});
+```
+
+<Warning>
+The `repeat` parameter must match the original repeat options EXACTLY, including timezone, startDate, etc. If they don't match, the job won't be found.
+</Warning>
+
+---
+
+## Queue.removeRepeatableByKey()
+
+Removes a Repeatable Job configuration by its unique key. This is more reliable than `removeRepeatable()` since you don't need to remember the exact options.
+
+### Signature
+
+```ts
+removeRepeatableByKey(key: string): Promise<void>
+```
+
+### Parameters
+
+<ParamField path="key" type="string" required>
+  The unique key of the repeatable job. Can be obtained from the job when created or from `getRepeatableJobs()`.
+</ParamField>
+
+### Returns
+
+<ResponseField name="promise" type="Promise<void>">
+  A promise that resolves when the repeatable job is removed.
+</ResponseField>
+
+### Examples
+
+#### Remove Using Key from Job Creation
+
+```js
+// Create job and store its key
+const job = await queue.add('cleanup', { type: 'temp' }, {
+  repeat: { every: 3600000 } // Every hour
+});
+
+const repeatKey = job.opts.repeat.key;
+console.log(`Job key: ${repeatKey}`);
+
+// Later, remove using the key
+await queue.removeRepeatableByKey(repeatKey);
+console.log('Repeatable job removed');
+```
+
+#### Remove Using Key from getRepeatableJobs()
+
+```js
+// Find the job in the list
+const repeatableJobs = await queue.getRepeatableJobs();
+const targetJob = repeatableJobs.find(job => job.name === 'daily-report');
+
+if (targetJob) {
+  await queue.removeRepeatableByKey(targetJob.key);
+  console.log('Job removed');
+} else {
+  console.log('Job not found');
+}
+```
+
+#### Remove by Job ID
+
+```js
+// Find job by its ID
+await queue.add('backup', { db: 'main' }, {
+  jobId: 'main-backup',
+  repeat: { cron: '0 1 * * *' }
+});
+
+// Later, find and remove by ID
+const jobs = await queue.getRepeatableJobs();
+const backupJob = jobs.find(job => job.id === 'main-backup');
+
+if (backupJob) {
+  await queue.removeRepeatableByKey(backupJob.key);
+}
+```
+
+#### Remove All Repeatable Jobs
+
+```js
+async function removeAllRepeatable() {
+  const jobs = await queue.getRepeatableJobs();
+  
+  console.log(`Removing ${jobs.length} repeatable jobs...`);
+  
+  for (const job of jobs) {
+    await queue.removeRepeatableByKey(job.key);
+    console.log(`Removed: ${job.name}`);
+  }
+  
+  console.log('All repeatable jobs removed');
+}
+
+await removeAllRepeatable();
+```
+
+---
+
+## Common Patterns
+
+### Store Repeatable Job Keys
+
+```js
+const repeatableKeys = new Map();
+
+async function addRepeatableJob(name, data, repeatOpts) {
+  const job = await queue.add(name, data, {
+    repeat: repeatOpts
+  });
+  
+  // Store the key for later removal
+  repeatableKeys.set(name, job.opts.repeat.key);
+  
+  return job;
+}
+
+async function removeRepeatableJob(name) {
+  const key = repeatableKeys.get(name);
+  
+  if (key) {
+    await queue.removeRepeatableByKey(key);
+    repeatableKeys.delete(name);
+    console.log(`Removed repeatable job: ${name}`);
+  } else {
+    console.log(`No key found for: ${name}`);
+  }
+}
+
+// Usage
+await addRepeatableJob('reports', { type: 'daily' }, { cron: '0 9 * * *' });
+await removeRepeatableJob('reports');
+```
+
+### Update Repeatable Job
+
+```js
+async function updateRepeatableJob(name, data, newRepeatOpts) {
+  // Find existing job
+  const jobs = await queue.getRepeatableJobs();
+  const existing = jobs.find(job => job.name === name);
+  
+  // Remove old configuration
+  if (existing) {
+    await queue.removeRepeatableByKey(existing.key);
+  }
+  
+  // Add new configuration
+  const job = await queue.add(name, data, {
+    repeat: newRepeatOpts
+  });
+  
+  return job;
+}
+
+// Update schedule from every hour to every day
+await updateRepeatableJob('sync', { source: 'api' }, {
+  cron: '0 0 * * *' // Midnight daily
+});
+```
+
+### Dashboard: List Active Schedules
+
+```js
+app.get('/api/schedules', async (req, res) => {
+  const jobs = await queue.getRepeatableJobs();
+  
+  const schedules = jobs.map(job => ({
+    name: job.name,
+    schedule: job.cron || `every ${job.every}ms`,
+    nextRun: new Date(job.next),
+    timezone: job.tz || 'UTC',
+    key: job.key
+  }));
+  
+  res.json(schedules);
+});
+```
+
+### Conditional Job Creation
+
+```js
+async function ensureRepeatableJob(name, data, repeatOpts) {
+  const jobs = await queue.getRepeatableJobs();
+  const exists = jobs.some(job => 
+    job.name === name && 
+    job.cron === repeatOpts.cron
+  );
+  
+  if (exists) {
+    console.log(`Job ${name} already exists`);
+    return null;
+  }
+  
+  const job = await queue.add(name, data, { repeat: repeatOpts });
+  console.log(`Created repeatable job: ${name}`);
+  return job;
+}
+```
+
+### Graceful Schedule Management
+
+```js
+class ScheduleManager {
+  constructor(queue) {
+    this.queue = queue;
+    this.schedules = new Map();
+  }
+  
+  async add(id, name, data, repeatOpts) {
+    const job = await this.queue.add(name, data, {
+      repeat: repeatOpts
+    });
+    
+    this.schedules.set(id, {
+      key: job.opts.repeat.key,
+      name,
+      repeatOpts
+    });
+    
+    return job;
+  }
+  
+  async remove(id) {
+    const schedule = this.schedules.get(id);
+    
+    if (schedule) {
+      await this.queue.removeRepeatableByKey(schedule.key);
+      this.schedules.delete(id);
+      return true;
+    }
+    
+    return false;
+  }
+  
+  async removeAll() {
+    for (const [id] of this.schedules) {
+      await this.remove(id);
+    }
+  }
+}
+
+// Usage
+const manager = new ScheduleManager(queue);
+
+await manager.add('daily-report', 'report', { type: 'daily' }, {
+  cron: '0 9 * * *'
+});
+
+await manager.remove('daily-report');
+```
+
+---
+
+## Important Notes
+
+<Warning>
+**Repeatable Job Lifecycle:**
+- Adding a repeatable job creates TWO things: a configuration + the first scheduled job
+- Removing a repeatable job only removes the configuration
+- Already scheduled jobs from that configuration remain in the queue
+- New jobs will no longer be created after removal
+</Warning>
+
+<Note>
+**Job Uniqueness:**
+- Multiple repeatable configurations can have the same `name`
+- Multiple repeatable configurations can have the same `jobId`
+- They are uniquely identified by their `key` which includes the repeat options
+</Note>
+
+<Note>
+**Clock Synchronization:**
+- Repeatable jobs run "on the hour" based on the cron schedule
+- A job created at 4:07 with "every 15 minutes" will first run at 4:15
+- Use `startDate` to control when the job should first run
+</Note>

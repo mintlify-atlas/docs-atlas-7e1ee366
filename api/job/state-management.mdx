@@ -1,0 +1,226 @@
+---
+title: 'State Management'
+description: 'Check and update job state programmatically'
+---
+
+Jobs in Bull transition through various states during their lifecycle. These methods allow you to query and manipulate job state.
+
+## getState()
+
+```ts
+getState(): Promise<JobStatus>
+```
+
+Returns a promise resolving to the current job's status.
+
+<ResponseField name="state" type="string">
+  Possible values: `completed`, `failed`, `delayed`, `active`, `waiting`, `paused`, `stuck`, or `null`
+</ResponseField>
+
+<Warning>
+  The implementation of this method is not very efficient, nor is it atomic. If your queue has a very large quantity of jobs, you may want to avoid using this method frequently.
+</Warning>
+
+### Checking Job State
+
+```javascript
+const job = await queue.getJob(jobId);
+const state = await job.getState();
+
+console.log(`Job is currently: ${state}`);
+
+if (state === 'failed') {
+  console.log('Job failed:', job.failedReason);
+  await job.retry();
+} else if (state === 'completed') {
+  console.log('Job completed with result:', job.returnvalue);
+}
+```
+
+### State-Based Logic
+
+```javascript
+async function handleJob(jobId) {
+  const job = await queue.getJob(jobId);
+  const state = await job.getState();
+  
+  switch (state) {
+    case 'waiting':
+    case 'delayed':
+      console.log('Job is queued');
+      break;
+    case 'active':
+      console.log('Job is currently processing');
+      break;
+    case 'completed':
+      console.log('Job finished successfully');
+      break;
+    case 'failed':
+      console.log('Job failed, retrying...');
+      await job.retry();
+      break;
+    default:
+      console.log('Unknown state:', state);
+  }
+}
+```
+
+## update()
+
+```ts
+update(data: object): Promise
+```
+
+Updates a job's data field with the given data object.
+
+<ParamField path="data" type="object" required>
+  The new data object to replace job.data
+</ParamField>
+
+### Updating Job Data
+
+```javascript
+const job = await queue.add({ status: 'pending', items: [] });
+
+// Later, update the job data
+await job.update({
+  status: 'in-progress',
+  items: ['item1', 'item2', 'item3']
+});
+
+console.log(job.data);
+// { status: 'in-progress', items: ['item1', 'item2', 'item3'] }
+```
+
+### Dynamic Job Updates
+
+```javascript
+queue.process(async (job) => {
+  // Fetch additional data during processing
+  const additionalData = await fetchExtraData(job.data.id);
+  
+  // Update job with new data
+  await job.update({
+    ...job.data,
+    additionalData: additionalData
+  });
+  
+  // Continue processing with updated data
+  return processWithData(job.data);
+});
+```
+
+<Note>
+  Updating job data does not change the job's state or restart processing. It only updates the `job.data` field.
+</Note>
+
+## moveToCompleted()
+
+```ts
+moveToCompleted(returnValue: any, ignoreLock: boolean, notFetch?: boolean): Promise<[string, string] | null>
+```
+
+Moves a job to the `completed` queue. Pulls a job from 'waiting' to 'active' and returns a tuple containing the next job's data and id.
+
+<ParamField path="returnValue" type="any" required>
+  The value to set as the job's return value
+</ParamField>
+
+<ParamField path="ignoreLock" type="boolean" required>
+  Whether to ignore the job lock
+</ParamField>
+
+<ParamField path="notFetch" type="boolean" optional>
+  Set to true to avoid prefetching the next job in the queue
+</ParamField>
+
+<ResponseField name="return" type="[string, string] | null">
+  Tuple of `[nextJobData, nextJobId]` or `null` if no job is waiting
+</ResponseField>
+
+<Warning>
+  This is a low-level method. In most cases, you should return a value from your processor function instead of calling this method directly.
+</Warning>
+
+### Manual Completion
+
+```javascript
+queue.process(async (job) => {
+  // Custom processing logic
+  const result = await customProcess(job.data);
+  
+  // Manually move to completed
+  await job.moveToCompleted(result, false);
+  
+  // Note: You typically wouldn't do this - just return the result instead
+});
+```
+
+## moveToFailed()
+
+```ts
+moveToFailed(errorInfo: { message: string }, ignoreLock?: boolean): Promise<[string, string] | null>
+```
+
+Moves a job to the `failed` queue. Pulls a job from 'waiting' to 'active' and returns a tuple containing the next job's data and id.
+
+<ParamField path="errorInfo" type="object" required>
+  Object containing error information
+  
+  <Expandable title="properties">
+    <ParamField path="message" type="string" required>
+      The error message
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="ignoreLock" type="boolean" optional>
+  Whether to ignore the job lock
+</ParamField>
+
+<ResponseField name="return" type="[string, string] | null">
+  Tuple of `[nextJobData, nextJobId]` or `null` if no job is waiting
+</ResponseField>
+
+<Warning>
+  This is a low-level method. In most cases, you should throw an error from your processor function instead of calling this method directly.
+</Warning>
+
+### Manual Failure
+
+```javascript
+queue.process(async (job) => {
+  const validation = validateJob(job.data);
+  
+  if (!validation.valid) {
+    // Manually move to failed
+    await job.moveToFailed({
+      message: `Validation failed: ${validation.error}`
+    }, false);
+    return;
+  }
+  
+  // Continue processing...
+  
+  // Note: You typically wouldn't do this - just throw an error instead
+});
+```
+
+### Recommended Approach
+
+Instead of using `moveToCompleted()` and `moveToFailed()` directly:
+
+```javascript
+queue.process(async (job) => {
+  // Validate
+  if (!isValid(job.data)) {
+    throw new Error('Invalid job data');
+  }
+  
+  // Process
+  const result = await processJob(job.data);
+  
+  // Return result (Bull handles moveToCompleted internally)
+  return result;
+});
+```

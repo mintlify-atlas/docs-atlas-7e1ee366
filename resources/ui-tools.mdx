@@ -1,0 +1,226 @@
+---
+title: UI Tools
+description: Web-based monitoring and management tools for Bull queues
+---
+
+Bull provides several third-party UI tools for monitoring and managing your queues. These tools offer visual dashboards, job inspection, and queue management capabilities.
+
+## Official Tool
+
+### Taskforce.sh
+
+[Taskforce.sh](https://taskforce.sh) is the official professional front-end for Bull and BullMQ.
+
+**Features:**
+- Complete overview of all your queues
+- Inspect jobs, search, retry, or promote delayed jobs
+- Metrics and statistics
+- Real-time monitoring
+- Job timeline and history
+- Advanced filtering and search
+- Team collaboration features
+- Production-ready with enterprise support
+
+**Supported Versions:**
+- BullMQ
+- Bull v3
+
+**Getting Started:**
+Sign up at [taskforce.sh](https://taskforce.sh) to get started with the professional monitoring solution.
+
+---
+
+## Community UI Tools
+
+### For Bull v3
+
+#### bull-board
+
+[bull-board](https://github.com/vcapretz/bull-board) - A queue monitoring dashboard for Bull.
+
+**Features:**
+- Web-based dashboard
+- Multiple queue support
+- Job inspection and management
+- Retry failed jobs
+- Clean completed/failed jobs
+- Real-time updates
+- Integration with Express, Fastify, Hapi, and Koa
+
+**Installation:**
+```bash
+npm install @bull-board/api @bull-board/express
+```
+
+**Basic Usage:**
+```javascript
+const { createBullBoard } = require('@bull-board/api');
+const { BullAdapter } = require('@bull-board/api/bullAdapter');
+const { ExpressAdapter } = require('@bull-board/express');
+
+const serverAdapter = new ExpressAdapter();
+serverAdapter.setBasePath('/admin/queues');
+
+createBullBoard({
+  queues: [new BullAdapter(myQueue)],
+  serverAdapter: serverAdapter,
+});
+
+app.use('/admin/queues', serverAdapter.getRouter());
+```
+
+#### bull-repl
+
+[bull-repl](https://github.com/darky/bull-repl) - A REPL (Read-Eval-Print Loop) interface for Bull queues.
+
+**Features:**
+- Command-line interface
+- Interactive job management
+- Queue inspection
+- Job manipulation
+- Scripting support
+
+**Installation:**
+```bash
+npm install -g bull-repl
+```
+
+**Usage:**
+```bash
+bull-repl redis://localhost:6379 myqueue
+```
+
+#### bull-monitor
+
+[bull-monitor](https://github.com/s-r-x/bull-monitor) - A UI built with React for monitoring Bull queues.
+
+**Features:**
+- Modern React-based interface
+- Real-time job monitoring
+- Queue metrics and statistics
+- Job search and filtering
+- Retry and remove operations
+- Dark mode support
+
+#### Monitoro
+
+[Monitoro](https://github.com/AbhilashJN/monitoro) - A simple and elegant monitoring dashboard.
+
+**Features:**
+- Clean, minimal interface
+- Multiple queue support
+- Job status visualization
+- Basic queue management
+- Lightweight and fast
+
+---
+
+### For Bull v2 and Earlier
+
+#### Matador
+
+[Matador](https://github.com/ShaneK/Matador) - A web-based UI for Bull queues (supports Bull v2 and earlier).
+
+**Features:**
+- Simple web interface
+- Job inspection
+- Queue statistics
+- Basic job management
+
+#### react-bull
+
+[react-bull](https://github.com/kfatehi/react-bull) - A React component for Bull queue monitoring.
+
+**Features:**
+- React component integration
+- Embeddable in existing React apps
+- Real-time updates
+- Job management capabilities
+
+#### Toureiro
+
+[Toureiro](https://github.com/Epharmix/Toureiro) - A dashboard for Bull queues.
+
+**Features:**
+- Express middleware
+- Multiple queue support
+- Job inspection and management
+- Queue statistics
+
+---
+
+## Choosing the Right Tool
+
+### For Production Use
+
+**Taskforce.sh** is recommended for production environments:
+- Professional support
+- Enterprise features
+- Scalable architecture
+- Security and compliance
+- Team collaboration
+
+### For Development and Small Projects
+
+Community tools are great for development and smaller deployments:
+- **bull-board**: Best all-around community tool with active development
+- **bull-monitor**: Modern React-based interface
+- **bull-repl**: Command-line power users
+- **Monitoro**: Lightweight and simple
+
+### Self-Hosted Requirements
+
+Most community tools can be self-hosted by:
+1. Adding the tool as a dependency to your project
+2. Mounting it on a route in your existing web server
+3. Protecting it with authentication middleware
+4. Ensuring it's not publicly accessible
+
+**Example with Express:**
+```javascript
+const express = require('express');
+const basicAuth = require('express-basic-auth');
+
+app.use(
+  '/admin/queues',
+  basicAuth({
+    users: { admin: 'supersecret' },
+    challenge: true,
+  }),
+  serverAdapter.getRouter()
+);
+```
+
+---
+
+## Integration Tips
+
+### Performance Considerations
+
+- UI tools can add overhead when monitoring large queues
+- Limit the number of jobs fetched per page
+- Use pagination for large result sets
+- Consider read replicas for Redis in high-load scenarios
+
+### Security Best Practices
+
+- Always protect UI endpoints with authentication
+- Use HTTPS in production
+- Restrict access by IP if possible
+- Set appropriate CORS policies
+- Regularly update dependencies
+
+### Monitoring Multiple Queues
+
+Most tools support multiple queues:
+
+```javascript
+createBullBoard({
+  queues: [
+    new BullAdapter(emailQueue),
+    new BullAdapter(videoQueue),
+    new BullAdapter(imageQueue),
+  ],
+  serverAdapter: serverAdapter,
+});
+```

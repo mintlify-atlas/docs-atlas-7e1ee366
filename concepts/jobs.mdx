@@ -1,0 +1,355 @@
+---
+title: Jobs
+description: Creating, managing, and understanding job states in Bull
+---
+
+## Overview
+
+A job represents a unit of work to be processed by a queue. Jobs contain the data needed for processing and track their state throughout the lifecycle.
+
+## Creating Jobs
+
+Use `Queue#add()` to create and add a job to the queue:
+
+```typescript
+add(name?: string, data: object, opts?: JobOpts): Promise<Job>
+```
+
+### Basic Job Creation
+
+```javascript
+const Queue = require('bull');
+const emailQueue = new Queue('emails');
+
+// Simple job with data
+await emailQueue.add({
+  to: 'user@example.com',
+  subject: 'Welcome!',
+  body: 'Thanks for signing up'
+});
+```
+
+### Named Jobs
+
+Name jobs to process them with specific handlers:
+
+```javascript
+// Add named jobs
+await emailQueue.add('welcome', { email: 'user@example.com' });
+await emailQueue.add('reminder', { email: 'user@example.com' });
+await emailQueue.add('newsletter', { email: 'user@example.com' });
+
+// Process each type differently
+emailQueue.process('welcome', async (job) => {
+  // Send welcome email
+});
+
+emailQueue.process('reminder', async (job) => {
+  // Send reminder email
+});
+```
+
+### Bulk Job Creation
+
+Add multiple jobs efficiently with `addBulk()`:
+
+```javascript
+await queue.addBulk([
+  { name: 'welcome', data: { email: 'user1@example.com' } },
+  { name: 'welcome', data: { email: 'user2@example.com' } },
+  { name: 'reminder', data: { email: 'user3@example.com' } }
+]);
+```
+
+## Job Data
+
+The `data` property contains the custom information passed when creating the job. This is what your processor function receives:
+
+```javascript
+const job = await queue.add({
+  userId: 123,
+  action: 'send-email',
+  templateId: 'welcome'
+});
+
+queue.process(async (job) => {
+  console.log(job.data.userId);     // 123
+  console.log(job.data.action);     // 'send-email'
+  console.log(job.data.templateId); // 'welcome'
+});
+```
+
+From the source (`~/workspace/source/lib/job.js:38-61`):
+
+```javascript
+const Job = function(queue, name, data, opts) {
+  if (typeof name !== 'string') {
+    opts = data;
+    data = name;
+    name = DEFAULT_JOB_NAME;
+  }
+
+  this.opts = setDefaultOpts(opts);
+  this.name = name;
+  this.queue = queue;
+  this.data = data;
+  this._progress = 0;
+  this.delay = this.opts.delay < 0 ? 0 : this.opts.delay;
+  this.timestamp = this.opts.timestamp;
+  this.stacktrace = [];
+  this.returnvalue = null;
+  this.attemptsMade = 0;
+};
+```
+
+## Job States
+
+Jobs transition through various states during their lifecycle:
+
+<Steps>
+  <Step title="Waiting">
+    Job is in the queue waiting to be processed
+  </Step>
+  <Step title="Active">
+    Job is currently being processed by a worker
+  </Step>
+  <Step title="Completed">
+    Job finished successfully
+  </Step>
+  <Step title="Failed">
+    Job failed after all retry attempts
+  </Step>
+  <Step title="Delayed">
+    Job is scheduled to run at a future time
+  </Step>
+  <Step title="Paused">
+    Job is in a paused queue
+  </Step>
+</Steps>
+
+### Checking Job State
+
+From the source (`~/workspace/source/lib/job.js:437-461`):
+
+```javascript
+job.getState().then(state => {
+  console.log(state); // 'completed', 'failed', 'delayed', 'active', 'waiting', 'paused', or 'stuck'
+});
+
+// Individual state checks
+await job.isCompleted();
+await job.isFailed();
+await job.isDelayed();
+await job.isActive();
+await job.isWaiting();
+await job.isPaused();
+```
+
+## Job IDs
+
+Bull automatically assigns a unique integer ID to each job. You can override this:
+
+```javascript
+// Custom job ID
+await queue.add({ data: 'value' }, {
+  jobId: 'user-123-welcome'
+});
+
+// Retrieve by ID
+const job = await queue.getJob('user-123-welcome');
+```
+
+<Warning>
+  If you use custom job IDs, ensure they are unique. Attempting to add a job with an existing ID will fail.
+</Warning>
+
+## Job Options
+
+The complete job options interface:
+
+```typescript
+interface JobOpts {
+  priority: number;              // Job priority (1 = highest)
+  delay: number;                 // Delay in milliseconds
+  attempts: number;              // Total retry attempts (default: 1)
+  repeat: RepeatOpts;            // Cron-based repetition
+  backoff: number | BackoffOpts; // Retry backoff strategy
+  lifo: boolean;                 // Add to front of queue (default: false)
+  timeout: number;               // Job timeout in milliseconds
+  jobId: string | number;        // Custom job identifier
+  removeOnComplete: boolean | number | KeepJobs;
+  removeOnFail: boolean | number | KeepJobs;
+  stackTraceLimit: number;       // Stack trace depth for errors
+}
+```
+
+### Priority
+
+Higher priority jobs are processed first:
+
+```javascript
+// Lower number = higher priority
+await queue.add({ urgent: true }, { priority: 1 });
+await queue.add({ normal: true }, { priority: 5 });
+await queue.add({ low: true }, { priority: 10 });
+```
+
+### Delays
+
+Schedule jobs to run in the future:
+
+```javascript
+// Process after 5 seconds
+await queue.add({ data: 'value' }, {
+  delay: 5000
+});
+
+// Process tomorrow
+const tomorrow = new Date();
+tomorrow.setDate(tomorrow.getDate() + 1);
+
+await queue.add({ data: 'value' }, {
+  delay: tomorrow.getTime() - Date.now()
+});
+```
+
+### Attempts and Backoff
+
+Automatically retry failed jobs:
+
+```javascript
+await queue.add({ data: 'value' }, {
+  attempts: 3,
+  backoff: {
+    type: 'exponential',
+    delay: 2000  // Start with 2 second delay
+  }
+});
+```
+
+From the source (`~/workspace/source/lib/job.js:63-75`):
+
+```javascript
+function setDefaultOpts(opts) {
+  const _opts = Object.assign({}, opts);
+
+  _opts.attempts = typeof _opts.attempts == 'undefined' ? 1 : _opts.attempts;
+  _opts.delay = typeof _opts.delay == 'undefined' ? 0 : Number(_opts.delay);
+  _opts.timestamp =
+    typeof _opts.timestamp == 'undefined' ? Date.now() : _opts.timestamp;
+
+  _opts.attempts = parseInt(_opts.attempts);
+  _opts.backoff = backoffs.normalize(_opts.backoff);
+
+  return _opts;
+}
+```
+
+### Automatic Cleanup
+
+Remove jobs automatically after completion:
+
+```javascript
+// Remove immediately after completion
+await queue.add({ data: 'value' }, {
+  removeOnComplete: true
+});
+
+// Keep last 100 completed jobs
+await queue.add({ data: 'value' }, {
+  removeOnComplete: 100
+});
+
+// Keep jobs for 24 hours
+await queue.add({ data: 'value' }, {
+  removeOnComplete: {
+    age: 24 * 3600  // in seconds
+  }
+});
+```
+
+## Job Properties
+
+Key properties available on job instances:
+
+<ResponseField name="job.id" type="string | number">
+  Unique job identifier
+</ResponseField>
+
+<ResponseField name="job.name" type="string">
+  Job type name or `__default__` for unnamed jobs
+</ResponseField>
+
+<ResponseField name="job.data" type="object">
+  The data payload passed when creating the job
+</ResponseField>
+
+<ResponseField name="job.opts" type="JobOpts">
+  Job options (attempts, delay, priority, etc.)
+</ResponseField>
+
+<ResponseField name="job.progress" type="number | object">
+  Current progress value (0-100 or custom object)
+</ResponseField>
+
+<ResponseField name="job.attemptsMade" type="number">
+  Number of processing attempts made
+</ResponseField>
+
+<ResponseField name="job.failedReason" type="string">
+  Error message if the job failed
+</ResponseField>
+
+<ResponseField name="job.stacktrace" type="string[]">
+  Stack traces from failed attempts
+</ResponseField>
+
+<ResponseField name="job.returnvalue" type="any">
+  The value returned by the processor on success
+</ResponseField>
+
+<ResponseField name="job.finishedOn" type="number">
+  Unix timestamp when the job completed or failed
+</ResponseField>
+
+<ResponseField name="job.processedOn" type="number">
+  Unix timestamp when processing started
+</ResponseField>
+
+## Job Methods
+
+Common operations on job instances:
+
+```javascript
+// Update progress
+await job.progress(50);
+
+// Add log entry
+await job.log('Processing started');
+
+// Update job data
+await job.update({ newField: 'value' });
+
+// Remove job
+await job.remove();
+
+// Retry failed job
+await job.retry();
+
+// Promote delayed job to waiting
+await job.promote();
+
+// Wait for job to finish
+const result = await job.finished();
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Job Lifecycle" icon="arrows-spin" href="/concepts/job-lifecycle">
+    Understand how jobs move through states
+  </Card>
+  <Card title="Processors" icon="gear" href="/concepts/processors">
+    Learn how to process jobs
+  </Card>
+</CardGroup>

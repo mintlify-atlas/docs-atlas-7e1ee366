@@ -1,0 +1,144 @@
+---
+title: Installation
+description: Install Bull and set up Redis for your Node.js project
+---
+
+Bull requires Node.js and Redis to function. Follow these steps to get started.
+
+## Prerequisites
+
+Before installing Bull, ensure you have:
+
+- **Node.js** version 12 or higher
+- **Redis** version 2.8.18 or higher
+
+<Warning>
+Bull requires Redis version 2.8.18 or higher. Earlier versions are not supported and may cause unexpected behavior.
+</Warning>
+
+## Install Bull
+
+<Steps>
+  <Step title="Install the Bull package">
+    Choose your preferred package manager to install Bull:
+
+    <CodeGroup>
+    ```bash npm
+    npm install bull --save
+    ```
+
+    ```bash yarn
+    yarn add bull
+    ```
+
+    ```bash pnpm
+    pnpm add bull
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install TypeScript definitions (optional)">
+    If you're using TypeScript, install the type definitions:
+
+    <CodeGroup>
+    ```bash npm
+    npm install @types/bull --save-dev
+    ```
+
+    ```bash yarn
+    yarn add --dev @types/bull
+    ```
+
+    ```bash pnpm
+    pnpm add -D @types/bull
+    ```
+    </CodeGroup>
+
+    <Info>
+    Type definitions are maintained in the [DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/bull) repository.
+    </Info>
+  </Step>
+
+  <Step title="Set up Redis">
+    Bull uses Redis as its datastore. Make sure Redis is installed and running:
+
+    **Install Redis:**
+    - macOS: `brew install redis`
+    - Ubuntu/Debian: `sudo apt-get install redis-server`
+    - Windows: Use [WSL](https://docs.microsoft.com/en-us/windows/wsl/) or [Redis for Windows](https://github.com/microsoftarchive/redis/releases)
+
+    **Start Redis:**
+    ```bash
+    redis-server
+    ```
+
+    **Verify Redis is running:**
+    ```bash
+    redis-cli ping
+    # Should return: PONG
+    ```
+  </Step>
+
+  <Step title="Verify installation">
+    Create a simple test file to verify Bull is installed correctly:
+
+    ```javascript test.js
+    const Queue = require('bull');
+    
+    const testQueue = new Queue('test');
+    
+    console.log('Bull is installed correctly!');
+    ```
+
+    Run the test:
+    ```bash
+    node test.js
+    ```
+  </Step>
+</Steps>
+
+## Redis Connection Options
+
+Bull supports multiple ways to connect to Redis:
+
+### Using a Redis URL
+
+```javascript
+const Queue = require('bull');
+
+const queue = new Queue('my-queue', 'redis://127.0.0.1:6379');
+```
+
+### Using a configuration object
+
+```javascript
+const Queue = require('bull');
+
+const queue = new Queue('my-queue', {
+  redis: {
+    port: 6379,
+    host: '127.0.0.1',
+    password: 'foobared',
+    db: 0
+  }
+});
+```
+
+### Using default localhost connection
+
+```javascript
+const Queue = require('bull');
+
+// Connects to Redis at 127.0.0.1:6379 by default
+const queue = new Queue('my-queue');
+```
+
+<Tip>
+Bull uses [ioredis](https://github.com/luin/ioredis) under the hood, so you can pass any ioredis-compatible configuration options.
+</Tip>
+
+## Next Steps
+
+<Card title="Quick Start Guide" icon="rocket" href="/quick-start">
+  Now that Bull is installed, create your first queue and start processing jobs
+</Card>

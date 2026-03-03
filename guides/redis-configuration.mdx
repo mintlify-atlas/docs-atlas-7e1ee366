@@ -1,0 +1,415 @@
+---
+title: Redis Configuration
+description: Configure Bull's Redis connection with custom settings, shared connections, and cluster support
+---
+
+Bull uses Redis as its persistence layer. Proper Redis configuration is essential for performance, reliability, and scalability. Bull supports various Redis configurations including standalone, connection pooling, and cluster setups.
+
+## Basic Configuration
+
+Create a queue with default Redis connection:
+
+```javascript
+const Queue = require('bull');
+
+// Connect to Redis on localhost:6379
+const queue = new Queue('my-queue');
+
+// Connect with connection string
+const queue = new Queue('my-queue', 'redis://127.0.0.1:6379');
+
+// Connect with options object
+const queue = new Queue('my-queue', {
+  redis: {
+    port: 6379,
+    host: '127.0.0.1',
+    password: 'my-password'
+  }
+});
+```
+
+## Redis Connection String
+
+Use a connection string URL for simple configuration:
+
+```javascript
+// Basic connection
+const queue = new Queue('tasks', 'redis://127.0.0.1:6379');
+
+// With password
+const queue = new Queue('tasks', 'redis://mypassword@myredis.server.com:1234');
+
+// With username and password (Redis 6+)
+const queue = new Queue('tasks', 'redis://username:password@redis.server.com:6379');
+
+// Select database
+const queue = new Queue('tasks', 'redis://localhost:6379/2');
+
+// TLS/SSL connection
+const queue = new Queue('tasks', 'rediss://secure.redis.server.com:6380');
+```
+
+## Redis Options
+
+The `RedisOpts` interface supports all ioredis configuration options:
+
+```typescript
+interface RedisOpts {
+  port?: number;      // Default: 6379
+  host?: string;      // Default: 'localhost'
+  db?: number;        // Default: 0
+  password?: string;  // Redis password
+}
+```
+
+<Info>
+Bull passes `RedisOpts` directly to ioredis. See the [ioredis documentation](https://github.com/luin/ioredis/blob/master/API.md) for all available options.
+</Info>
+
+### Common Redis Options
+
+```javascript
+const queue = new Queue('advanced', {
+  redis: {
+    port: 6380,
+    host: 'redis.example.com',
+    password: 'secret',
+    db: 2,
+    
+    // Connection options
+    connectTimeout: 10000,
+    keepAlive: 30000,
+    
+    // Retry strategy
+    retryStrategy: (times) => {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    },
+    
+    // TLS options
+    tls: {
+      rejectUnauthorized: false
+    }
+  }
+});
+```
+
+## Queue Options
+
+Full queue configuration interface:
+
+```typescript
+interface QueueOptions {
+  createClient?: (type: 'client' | 'subscriber' | 'bclient', config?: RedisOpts) => Redis;
+  limiter?: RateLimiter;
+  redis?: RedisOpts;
+  prefix?: string;              // Default: 'bull'
+  metrics?: MetricsOpts;
+  defaultJobOptions?: JobOpts;
+  settings?: AdvancedSettings;
+}
+```
+
+### Prefix Option
+
+Set a custom key prefix for Redis keys:
+
+```javascript
+const queue = new Queue('tasks', {
+  prefix: 'myapp',  // Keys: myapp:tasks:*
+  redis: { host: 'localhost' }
+});
+
+// Multiple apps on same Redis
+const app1Queue = new Queue('tasks', { prefix: 'app1' });
+const app2Queue = new Queue('tasks', { prefix: 'app2' });
+```
+
+<Note>
+The `prefix` option is useful when multiple applications share the same Redis instance, preventing key collisions.
+</Note>
+
+## Shared Redis Connections
+
+Reuse Redis connections across multiple queues to reduce connection count:
+
+```javascript
+const Redis = require('ioredis');
+const { REDIS_URL } = process.env;
+
+let client;
+let subscriber;
+
+const opts = {
+  createClient: function (type, redisOpts) {
+    switch (type) {
+      case 'client':
+        if (!client) {
+          client = new Redis(REDIS_URL, redisOpts);
+        }
+        return client;
+      
+      case 'subscriber':
+        if (!subscriber) {
+          subscriber = new Redis(REDIS_URL, redisOpts);
+        }
+        return subscriber;
+      
+      case 'bclient':
+        // bclient cannot be shared
+        return new Redis(REDIS_URL, redisOpts);
+      
+      default:
+        throw new Error('Unexpected connection type: ' + type);
+    }
+  }
+};
+
+const queueFoo = new Queue('foobar', opts);
+const queueQux = new Queue('quxbaz', opts);
+```
+
+<Warning>
+**bclient connections cannot be reused**. Always return a new connection for bclient type.
+</Warning>
+
+### Connection Types
+
+<Steps>
+  <Step title="client - Command connection">
+    Used for sending commands to Redis (add jobs, update state, etc.)
+    - **Can be shared** across queues
+    - Bull will not close this connection when queue closes
+  </Step>
+  
+  <Step title="subscriber - Event subscription">
+    Used for subscribing to Redis pub/sub for job events
+    - **Can be shared** across queues
+    - Bull will not close this connection when queue closes
+  </Step>
+  
+  <Step title="bclient - Blocking client">
+    Used to wait for new jobs (blocking BRPOPLPUSH)
+    - **Cannot be shared** (one per queue)
+    - Must return a new connection each time
+  </Step>
+</Steps>
+
+### Graceful Shutdown with Shared Connections
+
+```javascript
+const client = new Redis(REDIS_URL);
+const subscriber = new Redis(REDIS_URL);
+
+const opts = {
+  createClient: (type) => {
+    if (type === 'client') return client;
+    if (type === 'subscriber') return subscriber;
+    return new Redis(REDIS_URL);  // bclient
+  }
+};
+
+const queue1 = new Queue('q1', opts);
+const queue2 = new Queue('q2', opts);
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  // Close queues first
+  await queue1.close();
+  await queue2.close();
+  
+  // Then close shared connections
+  await client.quit();
+  await subscriber.quit();
+});
+```
+
+<Info>
+When using `createClient`, Bull does not close shared connections. You must manually close them during shutdown.
+</Info>
+
+## Redis Cluster Configuration
+
+Bull supports Redis Cluster using hash tags:
+
+```javascript
+const queue = new Queue('cluster', {
+  prefix: '{myprefix}'  // Hash tag ensures keys go to same slot
+});
+```
+
+### Why Hash Tags?
+
+Bull requires atomic operations spanning different keys, which breaks Redis Cluster's rules. Hash tags ensure all queue keys land on the same cluster node:
+
+```javascript
+// Good - all keys on same node
+const queue = new Queue('tasks', {
+  prefix: '{app1}'
+});
+// Keys: {app1}:tasks:id, {app1}:tasks:wait, etc.
+// All use "app1" for slot calculation
+
+// Bad - keys may be on different nodes
+const queue = new Queue('tasks', {
+  prefix: 'app1'
+});
+```
+
+<Warning>
+Without hash tags, Bull operations may fail on Redis Cluster with CROSSSLOT errors.
+</Warning>
+
+### Multiple Queues in Cluster
+
+Use different prefixes to distribute queues across cluster nodes:
+
+```javascript
+// Queue 1 - goes to slot based on "q1"
+const queue1 = new Queue('tasks', { prefix: '{q1}' });
+
+// Queue 2 - goes to slot based on "q2"
+const queue2 = new Queue('tasks', { prefix: '{q2}' });
+
+// Queue 3 - goes to slot based on "q3"
+const queue3 = new Queue('tasks', { prefix: '{q3}' });
+```
+
+<Info>
+Different prefixes distribute queues evenly across cluster nodes for better performance.
+</Info>
+
+### Cluster Connection Example
+
+```javascript
+const Redis = require('ioredis');
+
+const clusterNodes = [
+  { host: 'redis-node-1', port: 6379 },
+  { host: 'redis-node-2', port: 6379 },
+  { host: 'redis-node-3', port: 6379 }
+];
+
+const opts = {
+  createClient: (type, config) => {
+    const cluster = new Redis.Cluster(clusterNodes, {
+      redisOptions: config
+    });
+    return cluster;
+  },
+  prefix: '{myapp}'  // Critical for cluster!
+};
+
+const queue = new Queue('tasks', opts);
+```
+
+## Environment-Based Configuration
+
+```javascript
+const Queue = require('bull');
+
+function createQueue(name) {
+  const config = {
+    redis: {
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT) || 6379,
+      password: process.env.REDIS_PASSWORD,
+      db: parseInt(process.env.REDIS_DB) || 0
+    },
+    prefix: process.env.QUEUE_PREFIX || 'bull'
+  };
+  
+  // Use connection string if provided
+  if (process.env.REDIS_URL) {
+    return new Queue(name, process.env.REDIS_URL);
+  }
+  
+  return new Queue(name, config);
+}
+
+const emailQueue = createQueue('emails');
+const taskQueue = createQueue('tasks');
+```
+
+## Best Practices
+
+<Tip>
+**Use connection pooling**: Share client and subscriber connections across queues when possible to reduce Redis connection count.
+</Tip>
+
+<Tip>
+**Set a custom prefix**: Use the `prefix` option when running multiple applications on the same Redis instance.
+</Tip>
+
+<Warning>
+**Don't set keyPrefix on ioredis connections**: Use Bull's built-in `prefix` option instead. Setting keyPrefix on the Redis connection can cause issues.
+</Warning>
+
+<Note>
+**Monitor connection count**: Each queue requires 3 connections by default. Use shared connections on platforms with connection limits (like Heroku).
+</Note>
+
+## Connection Health Monitoring
+
+```javascript
+const queue = new Queue('monitored', {
+  redis: {
+    host: 'localhost',
+    retryStrategy: (times) => {
+      console.log(`Redis connection retry attempt ${times}`);
+      return Math.min(times * 50, 2000);
+    }
+  }
+});
+
+queue.client.on('connect', () => {
+  console.log('Redis client connected');
+});
+
+queue.client.on('error', (err) => {
+  console.error('Redis client error:', err);
+});
+
+queue.client.on('reconnecting', () => {
+  console.log('Redis client reconnecting...');
+});
+```
+
+## TLS/SSL Configuration
+
+```javascript
+const fs = require('fs');
+
+const queue = new Queue('secure', {
+  redis: {
+    port: 6380,
+    host: 'secure-redis.example.com',
+    tls: {
+      ca: fs.readFileSync('./ca.crt'),
+      cert: fs.readFileSync('./client.crt'),
+      key: fs.readFileSync('./client.key'),
+      rejectUnauthorized: true
+    }
+  }
+});
+```
+
+## Testing Configuration
+
+```javascript
+// Use different database for tests
+const queue = new Queue('test-queue', {
+  redis: {
+    host: 'localhost',
+    db: process.env.NODE_ENV === 'test' ? 15 : 0
+  }
+});
+
+// Or use connection string with db
+const testQueue = new Queue(
+  'test',
+  process.env.NODE_ENV === 'test' 
+    ? 'redis://localhost:6379/15'
+    : 'redis://localhost:6379/0'
+);
+```

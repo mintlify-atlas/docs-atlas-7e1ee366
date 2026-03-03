@@ -1,0 +1,202 @@
+---
+title: Quick Start
+description: Create your first Bull queue and start processing jobs in minutes
+---
+
+This guide walks you through creating a queue, adding jobs, and processing them with Bull.
+
+## Basic Usage
+
+<Steps>
+  <Step title="Import Bull and create a queue">
+    First, require Bull and create a new queue instance. Each queue is identified by a unique name.
+
+    ```javascript
+    const Queue = require('bull');
+
+    const videoQueue = new Queue('video transcoding', 'redis://127.0.0.1:6379');
+    ```
+
+    You can create multiple queues for different job types:
+
+    ```javascript
+    const Queue = require('bull');
+
+    const videoQueue = new Queue('video transcoding', 'redis://127.0.0.1:6379');
+    const audioQueue = new Queue('audio transcoding', { 
+      redis: { port: 6379, host: '127.0.0.1', password: 'foobared' } 
+    });
+    const imageQueue = new Queue('image transcoding');
+    const pdfQueue = new Queue('pdf transcoding');
+    ```
+
+    <Info>
+    If you don't specify Redis connection details, Bull connects to `127.0.0.1:6379` by default.
+    </Info>
+  </Step>
+
+  <Step title="Define a job processor">
+    Create a processor function that handles jobs from the queue. The processor receives a job object and a done callback.
+
+    ```javascript
+    videoQueue.process(function (job, done) {
+      // job.data contains the custom data passed when the job was created
+      // job.id contains id of this job.
+
+      // transcode video asynchronously and report progress
+      job.progress(42);
+
+      // call done when finished
+      done();
+
+      // or give an error if error
+      done(new Error('error transcoding'));
+
+      // or pass it a result
+      done(null, { framerate: 29.5 /* etc... */ });
+
+      // If the job throws an unhandled exception it is also handled correctly
+      throw new Error('some unexpected error');
+    });
+    ```
+
+    <Note>
+    The processor function is called every time a job is ready to be processed. Jobs are processed one at a time by default.
+    </Note>
+  </Step>
+
+  <Step title="Add jobs to the queue">
+    Add jobs to the queue with custom data. Jobs are processed in the order they're added (FIFO by default).
+
+    ```javascript
+    videoQueue.add({ video: 'http://example.com/video1.mov' });
+    audioQueue.add({ audio: 'http://example.com/audio1.mp3' });
+    imageQueue.add({ image: 'http://example.com/image1.tiff' });
+    ```
+
+    The data you pass to `add()` will be available in `job.data` when the processor runs.
+  </Step>
+</Steps>
+
+## Using Promises
+
+Instead of using the `done` callback, you can return a promise from your processor:
+
+```javascript
+videoQueue.process(function (job) {
+  // Simply return a promise
+  return fetchVideo(job.data.url).then(transcodeVideo);
+
+  // Handles promise rejection
+  return Promise.reject(new Error('error transcoding'));
+
+  // Passes the value the promise is resolved with to the "completed" event
+  return Promise.resolve({ framerate: 29.5 /* etc... */ });
+
+  // If the job throws an unhandled exception it is also handled correctly
+  throw new Error('some unexpected error');
+  // same as
+  return Promise.reject(new Error('some unexpected error'));
+});
+```
+
+<Tip>
+Using promises is the recommended approach as it integrates better with modern async/await syntax and error handling.
+</Tip>
+
+## Promise-Based Processor Example
+
+```javascript
+pdfQueue.process(function (job) {
+  // Processors can also return promises instead of using the done callback
+  return pdfAsyncProcessor();
+});
+```
+
+## Complete Example
+
+Here's a complete example showing queue creation, job processing, and job addition:
+
+```javascript
+const Queue = require('bull');
+
+// Create a queue
+const videoQueue = new Queue('video transcoding', 'redis://127.0.0.1:6379');
+
+// Define the processor
+videoQueue.process(function (job, done) {
+  console.log('Processing job', job.id);
+  console.log('Job data:', job.data);
+
+  // Simulate async work
+  setTimeout(() => {
+    // Report progress
+    job.progress(50);
+
+    setTimeout(() => {
+      job.progress(100);
+      // Job completed successfully
+      done(null, { status: 'transcoded', framerate: 29.5 });
+    }, 1000);
+  }, 1000);
+});
+
+// Add a job to the queue
+videoQueue.add({
+  video: 'http://example.com/video1.mov',
+  format: 'mp4'
+}).then(job => {
+  console.log('Job added with ID:', job.id);
+});
+
+// Listen to job events
+videoQueue.on('completed', (job, result) => {
+  console.log(`Job ${job.id} completed with result:`, result);
+});
+
+videoQueue.on('failed', (job, err) => {
+  console.log(`Job ${job.id} failed with error:`, err.message);
+});
+```
+
+## Reporting Progress
+
+You can report job progress using `job.progress()`. This is useful for long-running jobs:
+
+```javascript
+imageQueue.process(function (job, done) {
+  // Report progress as a percentage
+  job.progress(42);
+
+  // Continue processing...
+  
+  // call done when finished
+  done();
+
+  // or give an error if error
+  done(new Error('error transcoding'));
+
+  // or pass it a result
+  done(null, { width: 1280, height: 720 /* etc... */ });
+
+  // If the job throws an unhandled exception it is also handled correctly
+  throw new Error('some unexpected error');
+});
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Concurrency" icon="gauge-high" href="/guides/concurrency">
+    Process multiple jobs in parallel
+  </Card>
+  <Card title="Job Options" icon="sliders" href="/advanced/job-options">
+    Configure retries, delays, and priorities
+  </Card>
+  <Card title="Events" icon="bell" href="/concepts/events">
+    Listen to queue and job events
+  </Card>
+  <Card title="Patterns" icon="book" href="/patterns/message-queue">
+    Learn common patterns and best practices
+  </Card>
+</CardGroup>

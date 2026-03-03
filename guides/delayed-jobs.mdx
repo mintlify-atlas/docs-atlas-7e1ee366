@@ -1,0 +1,182 @@
+---
+title: Delayed Jobs
+description: Schedule jobs to be processed at a future time with Bull's delay option
+---
+
+Delayed jobs allow you to schedule jobs to be processed at a specific time in the future. This is useful for scenarios like sending reminder emails, scheduling reports, or triggering time-sensitive workflows.
+
+## Basic Usage
+
+Add a job with the `delay` option to schedule it for future processing:
+
+```javascript
+const Queue = require('bull');
+const myQueue = new Queue('delayed-tasks');
+
+// Process jobs in 5 seconds
+await myQueue.add({ task: 'send-email' }, { delay: 5000 });
+
+// Process jobs in 1 hour (3600000 milliseconds)
+await myQueue.add({ task: 'generate-report' }, { delay: 3600000 });
+```
+
+## How Delays Work
+
+The `delay` option accepts a number representing **milliseconds** to wait before the job can be processed.
+
+```typescript
+interface JobOpts {
+  delay: number; // An amount of milliseconds to wait until this job can be processed.
+}
+```
+
+<Note>
+For accurate delays, both server and clients should have their clocks synchronized. Time drift between systems can affect when delayed jobs are processed.
+</Note>
+
+## Common Use Cases
+
+<Tabs>
+  <Tab title="Email Reminders">
+    ```javascript
+    const emailQueue = new Queue('email-reminders');
+
+    // Send password reset email after 5 minutes if not completed
+    await emailQueue.add(
+      { 
+        type: 'password-reset-reminder',
+        userId: user.id,
+        email: user.email 
+      },
+      { delay: 300000 } // 5 minutes
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Scheduled Reports">
+    ```javascript
+    const reportQueue = new Queue('reports');
+
+    // Generate end-of-day report at midnight
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    const delayMs = midnight.getTime() - now.getTime();
+
+    await reportQueue.add(
+      { reportType: 'daily-summary' },
+      { delay: delayMs }
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Retry After Delay">
+    ```javascript
+    const apiQueue = new Queue('api-calls');
+
+    // Retry API call after 30 seconds on rate limit
+    await apiQueue.add(
+      { endpoint: '/api/users', retryCount: 1 },
+      { delay: 30000 }
+    );
+    ```
+  </Tab>
+</Tabs>
+
+## Working with Delayed Jobs
+
+### Retrieving Delayed Jobs
+
+You can get all delayed jobs from the queue:
+
+```javascript
+const delayedJobs = await myQueue.getDelayed();
+console.log(`Found ${delayedJobs.length} delayed jobs`);
+```
+
+### Checking Delay Count
+
+```javascript
+const count = await myQueue.getDelayedCount();
+console.log(`${count} jobs are currently delayed`);
+```
+
+### Promoting Delayed Jobs
+
+You can promote a delayed job to execute immediately:
+
+```javascript
+const job = await myQueue.getJob(jobId);
+if (job) {
+  await job.promote();
+  console.log('Job promoted to waiting state');
+}
+```
+
+## Combining with Other Options
+
+Delayed jobs can be combined with other job options:
+
+```javascript
+await myQueue.add(
+  { task: 'important-delayed-task' },
+  {
+    delay: 10000,           // Wait 10 seconds
+    attempts: 3,            // Retry up to 3 times if it fails
+    priority: 1,            // High priority
+    removeOnComplete: true  // Clean up after completion
+  }
+);
+```
+
+<Warning>
+Delayed jobs use Redis sorted sets internally. Very large numbers of delayed jobs (millions) may impact Redis memory usage.
+</Warning>
+
+## Delay vs Repeatable Jobs
+
+<Info>
+- **Delayed Jobs**: Execute once at a specific future time
+- **Repeatable Jobs**: Execute repeatedly on a schedule (see [Repeatable Jobs](/guides/repeatable-jobs))
+</Info>
+
+```javascript
+// Delayed job - runs once
+await queue.add({ task: 'one-time' }, { delay: 5000 });
+
+// Repeatable job - runs on schedule
+await queue.add({ task: 'recurring' }, { repeat: { cron: '0 9 * * *' } });
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use absolute timestamps for precision">
+    Calculate the exact delay based on timestamps rather than estimating:
+    
+    ```javascript
+    const targetTime = new Date('2026-12-31T23:59:59Z');
+    const delay = targetTime.getTime() - Date.now();
+    await queue.add(data, { delay });
+    ```
+  </Step>
+  
+  <Step title="Handle clock skew">
+    Be aware that delays depend on system time. Use NTP synchronization in production environments.
+  </Step>
+  
+  <Step title="Set appropriate cleanup policies">
+    Use `removeOnComplete` to prevent delayed job metadata from accumulating:
+    
+    ```javascript
+    await queue.add(data, { 
+      delay: 60000,
+      removeOnComplete: true 
+    });
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+For delays longer than a few days, consider using repeatable jobs with a cron expression instead, as they're more reliable for long-term scheduling.
+</Tip>

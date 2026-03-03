@@ -1,0 +1,288 @@
+---
+title: Feature Comparison
+description: Compare Bull with BullMQ, BullMQ-Pro, and other job queue solutions
+---
+
+Choosing the right job queue library depends on your specific requirements. This guide compares Bull with other popular Node.js job queue solutions.
+
+## Bull Family Comparison
+
+### BullMQ-Pro vs BullMQ vs Bull
+
+| Feature | BullMQ-Pro | BullMQ | Bull |
+|---------|------------|--------|------|
+| **Backend** | Redis | Redis | Redis |
+| **Language** | TypeScript | TypeScript | JavaScript |
+| **Observables** | ✓ | ✗ | ✗ |
+| **Group Rate Limit** | ✓ | ✗ | ✗ |
+| **Group Support** | ✓ | ✗ | ✗ |
+| **Batches Support** | ✓ | ✗ | ✗ |
+| **Parent/Child Dependencies** | ✓ | ✓ | ✗ |
+| **Priorities** | ✓ | ✓ | ✓ |
+| **Concurrency** | ✓ | ✓ | ✓ |
+| **Delayed Jobs** | ✓ | ✓ | ✓ |
+| **Global Events** | ✓ | ✓ | ✓ |
+| **Rate Limiter** | ✓ | ✓ | ✓ |
+| **Pause/Resume** | ✓ | ✓ | ✓ |
+| **Sandboxed Worker** | ✓ | ✓ | ✓ |
+| **Repeatable Jobs** | ✓ | ✓ | ✓ |
+| **Atomic Operations** | ✓ | ✓ | ✓ |
+| **Persistence** | ✓ | ✓ | ✓ |
+| **UI** | ✓ | ✓ | ✓ |
+| **Maintenance Status** | Active | Active | Maintenance |
+| **Optimized For** | Jobs / Messages | Jobs / Messages | Jobs / Messages |
+
+### BullMQ-Pro
+
+**[BullMQ-Pro](https://bullmq.io/#bullmq-pro)** is the premium version with advanced features:
+
+- **Observables**: Real-time job progress streams
+- **Groups**: Organize and manage related jobs together
+- **Group Rate Limiting**: Rate limit by job groups
+- **Batches**: Process multiple jobs as a single unit
+- **Priority Support**: Professional support from the Bull team
+- **Advanced Features**: Early access to new capabilities
+
+**Best For:**
+- Enterprise applications
+- Complex workflow requirements
+- Teams needing professional support
+- High-scale production systems
+
+### BullMQ
+
+**[BullMQ](https://github.com/taskforcesh/bullmq)** is the modern successor to Bull:
+
+- **TypeScript Native**: Full TypeScript support
+- **Modern API**: async/await throughout
+- **Better Performance**: Optimized Lua scripts
+- **Parent/Child Jobs**: Build complex job workflows
+- **Active Development**: New features and improvements
+- **Flows**: Define multi-step job dependencies
+
+**Best For:**
+- New projects
+- TypeScript projects
+- Teams wanting modern features
+- Applications needing job dependencies
+
+### Bull
+
+**Bull** is the stable, battle-tested version:
+
+- **Mature and Stable**: Years of production use
+- **Maintenance Mode**: Bug fixes only, no new features
+- **Wide Adoption**: Large community and ecosystem
+- **Well Documented**: Extensive docs and examples
+- **JavaScript First**: Written in JavaScript
+
+**Best For:**
+- Existing projects already using Bull
+- Teams preferring stability over new features
+- Projects not needing latest capabilities
+- Simple job queue requirements
+
+---
+
+## Comparison with Other Solutions
+
+### Full Feature Matrix
+
+| Feature | BullMQ-Pro | BullMQ | Bull | Kue | Bee | Agenda |
+|---------|------------|--------|------|-----|-----|--------|
+| **Backend** | Redis | Redis | Redis | Redis | Redis | MongoDB |
+| **Observables** | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Group Rate Limit** | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Group Support** | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Batches Support** | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Parent/Child Dependencies** | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
+| **Priorities** | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **Concurrency** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Delayed Jobs** | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **Global Events** | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **Rate Limiter** | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ |
+| **Pause/Resume** | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **Sandboxed Worker** | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ |
+| **Repeatable Jobs** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ |
+| **Atomic Operations** | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ |
+| **Persistence** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **UI** | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **Optimized For** | Jobs/Messages | Jobs/Messages | Jobs/Messages | Jobs | Messages | Jobs |
+
+---
+
+## Alternative Libraries
+
+### Kue
+
+**[Kue](https://github.com/Automattic/kue)** - Redis-backed priority job queue
+
+**Pros:**
+- Priority queue support
+- Built-in UI
+- Job event tracking
+- Progress tracking
+
+**Cons:**
+- No longer actively maintained
+- No atomic operations
+- Limited rate limiting
+- No sandboxed workers
+
+**Use Case:** Legacy projects, simple priority queues
+
+### Bee-Queue
+
+**[Bee-Queue](https://github.com/bee-queue/bee-queue)** - Simple, fast job queue
+
+**Pros:**
+- Very fast for simple use cases
+- Low memory footprint
+- Atomic operations
+- Simple API
+
+**Cons:**
+- No priorities
+- No delayed jobs
+- No repeatable jobs
+- Limited features
+
+**Use Case:** High-throughput message queues, simple processing
+
+### Agenda
+
+**[Agenda](https://github.com/agenda/agenda)** - MongoDB-backed job scheduler
+
+**Pros:**
+- MongoDB backend (no Redis needed)
+- Repeatable/scheduled jobs
+- Human-friendly scheduling
+- Good for periodic tasks
+
+**Cons:**
+- Slower than Redis-based solutions
+- No atomic operations
+- No rate limiting
+- Not optimized for high throughput
+
+**Use Case:** MongoDB-based stacks, scheduled tasks, cron-like jobs
+
+---
+
+## Decision Guide
+
+### Choose BullMQ-Pro if:
+- You need advanced features (observables, groups, batches)
+- Running enterprise production systems
+- Require professional support
+- Building complex job workflows
+- Budget allows for commercial licensing
+
+### Choose BullMQ if:
+- Starting a new project
+- Using TypeScript
+- Need parent/child job dependencies
+- Want modern, actively developed features
+- Prefer async/await patterns
+
+### Choose Bull if:
+- Already using Bull in production
+- Need stable, battle-tested solution
+- Don't need latest features
+- Prefer JavaScript over TypeScript
+- Want minimal migration effort
+
+### Choose Kue if:
+- Maintaining legacy systems
+- Need simple priority queues
+- Already have Kue expertise
+
+### Choose Bee-Queue if:
+- Need maximum throughput
+- Simple message queue use case
+- Memory is constrained
+- Don't need advanced features
+
+### Choose Agenda if:
+- Already using MongoDB
+- Primarily need scheduled/cron jobs
+- Don't need high throughput
+- Prefer MongoDB to Redis
+
+---
+
+## Performance Comparison
+
+### Throughput (Jobs/Second)
+
+**Simple Job Processing (Single Worker):**
+- Bee-Queue: ~5,000 jobs/sec
+- BullMQ: ~4,000 jobs/sec  
+- Bull: ~3,500 jobs/sec
+- Kue: ~1,500 jobs/sec
+- Agenda: ~500 jobs/sec
+
+**Note:** Actual performance varies based on:
+- Job complexity
+- Redis/MongoDB configuration
+- Network latency
+- Hardware resources
+- Concurrency settings
+
+### Memory Usage
+
+**Typical Memory Footprint:**
+- Bee-Queue: Lowest (~10-20 MB base)
+- Bull/BullMQ: Low (~20-40 MB base)
+- Kue: Medium (~40-60 MB base)
+- Agenda: Higher (depends on MongoDB)
+
+---
+
+## Migration Paths
+
+### From Kue to Bull/BullMQ
+- Both use Redis backend
+- Similar API concepts
+- Better performance and reliability
+- More features and active development
+
+### From Bull to BullMQ
+- Gradual migration possible
+- Can run both in parallel
+- TypeScript support
+- Modern features
+
+### From Agenda to Bull/BullMQ
+- Different backend (MongoDB → Redis)
+- Better performance for job processing
+- Keep Agenda for scheduled tasks if preferred
+- Or migrate scheduling to Bull repeatable jobs
+
+---
+
+## Ecosystem and Community
+
+### Bull/BullMQ
+- Large, active community
+- Extensive documentation
+- Many UI tools available
+- Commercial support available
+- Used by major companies (Atlassian, Mozilla, Autodesk)
+
+### Kue
+- Smaller community
+- No longer actively maintained
+- Legacy documentation
+- Some UI tools available
+
+### Bee-Queue
+- Small, focused community
+- Minimal but sufficient documentation
+- Stable, infrequent updates
+
+### Agenda
+- Active community
+- Good documentation
+- MongoDB ecosystem integration
+- Regular updates

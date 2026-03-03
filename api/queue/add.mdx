@@ -1,0 +1,369 @@
+---
+title: "Queue.add() & addBulk()"
+description: "Create and add jobs to the queue"
+---
+
+## Queue.add()
+
+Creates a new job and adds it to the queue. If the queue is empty, the job will be executed directly. Otherwise, it will be placed in the queue and executed as soon as possible.
+
+### Signature
+
+```ts
+add(name?: string, data: object, opts?: JobOpts): Promise<Job>
+```
+
+### Parameters
+
+<ParamField path="name" type="string">
+  Optional name for the job (also called job type). Only process functions defined for this name will process the job.
+</ParamField>
+
+<ParamField path="data" type="object" required>
+  The job data. This object will be available as `job.data` in the processor function.
+</ParamField>
+
+<ParamField path="opts" type="JobOpts">
+  Job options.
+
+  <ParamField path="priority" type="number">
+    Priority value ranging from 1 (highest) to MAX_INT (lowest). Using priorities has a slight performance impact.
+  </ParamField>
+
+  <ParamField path="delay" type="number">
+    Milliseconds to wait before this job can be processed. For accurate delays, ensure server and client clocks are synchronized.
+  </ParamField>
+
+  <ParamField path="attempts" type="number">
+    Total number of attempts to try the job until it completes.
+  </ParamField>
+
+  <ParamField path="repeat" type="RepeatOpts">
+    Repeat job according to a schedule.
+    
+    <ParamField path="cron" type="string">
+      Cron expression for the schedule.
+    </ParamField>
+    
+    <ParamField path="tz" type="string">
+      Timezone for cron expression.
+    </ParamField>
+    
+    <ParamField path="startDate" type="Date | string | number">
+      Start date when the repeat job should start (only with cron).
+    </ParamField>
+    
+    <ParamField path="endDate" type="Date | string | number">
+      End date when the repeat job should stop repeating.
+    </ParamField>
+    
+    <ParamField path="limit" type="number">
+      Number of times the job should repeat at maximum.
+    </ParamField>
+    
+    <ParamField path="every" type="number">
+      Repeat every X milliseconds. Cannot be used with cron setting.
+    </ParamField>
+    
+    <ParamField path="count" type="number">
+      Start value for the repeat iteration count.
+    </ParamField>
+  </ParamField>
+
+  <ParamField path="backoff" type="number | BackoffOpts">
+    Backoff setting for automatic retries if the job fails. Requires `attempts` to be set.
+    
+    **As number:** Delay in milliseconds using fixed strategy.
+    
+    **As object:**
+    <ParamField path="type" type="string">
+      Backoff type: 'fixed', 'exponential', or custom strategy name.
+    </ParamField>
+    
+    <ParamField path="delay" type="number">
+      Backoff delay in milliseconds.
+    </ParamField>
+    
+    <ParamField path="options" type="any">
+      Options for custom backoff strategies.
+    </ParamField>
+  </ParamField>
+
+  <ParamField path="lifo" type="boolean" default="false">
+    If true, adds the job to the right of the queue (LIFO) instead of the left (FIFO).
+  </ParamField>
+
+  <ParamField path="timeout" type="number">
+    Number of milliseconds after which the job should fail with a timeout error.
+  </ParamField>
+
+  <ParamField path="jobId" type="number | string">
+    Override the job ID. By default, the job ID is a unique integer. You must ensure uniqueness when using this option.
+  </ParamField>
+
+  <ParamField path="removeOnComplete" type="boolean | number | KeepJobs">
+    If true, removes the job when it successfully completes. A number specifies the count of jobs to keep.
+    
+    **KeepJobs interface:**
+    <ParamField path="age" type="number">
+      Maximum age in seconds for job to be kept.
+    </ParamField>
+    
+    <ParamField path="count" type="number">
+      Maximum count of jobs to be kept.
+    </ParamField>
+  </ParamField>
+
+  <ParamField path="removeOnFail" type="boolean | number | KeepJobs">
+    If true, removes the job when it fails after all attempts. A number specifies the count of jobs to keep.
+  </ParamField>
+
+  <ParamField path="stackTraceLimit" type="number">
+    Limits the number of stack trace lines recorded in the stacktrace.
+  </ParamField>
+</ParamField>
+
+### Returns
+
+<ResponseField name="job" type="Promise<Job>">
+  A promise that resolves to the created Job instance.
+</ResponseField>
+
+### Examples
+
+#### Basic Job
+
+```js
+const job = await queue.add({ email: 'user@example.com' });
+console.log(`Job created with ID: ${job.id}`);
+```
+
+#### Named Job
+
+```js
+await queue.add('email', {
+  to: 'user@example.com',
+  subject: 'Welcome!',
+  body: 'Thanks for signing up'
+});
+```
+
+#### Delayed Job
+
+```js
+// Process after 5 seconds
+await queue.add('reminder', { userId: 123 }, {
+  delay: 5000
+});
+```
+
+#### Job with Priority
+
+```js
+// Higher priority (processed first)
+await queue.add('urgent-task', { data: 'important' }, {
+  priority: 1
+});
+
+// Lower priority
+await queue.add('normal-task', { data: 'regular' }, {
+  priority: 10
+});
+```
+
+#### Job with Retry Logic
+
+```js
+await queue.add('api-request', { url: 'https://api.example.com' }, {
+  attempts: 3,
+  backoff: {
+    type: 'exponential',
+    delay: 2000
+  }
+});
+```
+
+#### Repeating Job (Cron)
+
+```js
+// Run every day at 3:00 AM
+await queue.add('daily-report', { type: 'summary' }, {
+  repeat: {
+    cron: '0 3 * * *',
+    tz: 'America/New_York'
+  }
+});
+```
+
+#### Repeating Job (Interval)
+
+```js
+// Run every 30 seconds
+await queue.add('health-check', { service: 'api' }, {
+  repeat: {
+    every: 30000
+  }
+});
+```
+
+#### Job with Timeout
+
+```js
+await queue.add('long-task', { data: 'process' }, {
+  timeout: 60000, // Fail if not completed in 60 seconds
+  attempts: 2
+});
+```
+
+#### Job with Custom ID
+
+```js
+await queue.add('unique-task', { userId: 123 }, {
+  jobId: 'user-123-daily-task'
+});
+```
+
+#### Auto-cleanup Completed Jobs
+
+```js
+await queue.add('temporary-task', { data: 'value' }, {
+  removeOnComplete: true,
+  removeOnFail: true
+});
+```
+
+#### Keep Last N Jobs
+
+```js
+await queue.add('logged-task', { data: 'value' }, {
+  removeOnComplete: 100, // Keep last 100 completed
+  removeOnFail: 50       // Keep last 50 failed
+});
+```
+
+#### Keep Jobs by Age
+
+```js
+await queue.add('archived-task', { data: 'value' }, {
+  removeOnComplete: {
+    age: 86400, // Keep for 24 hours (in seconds)
+    count: 1000 // But maximum 1000 jobs
+  }
+});
+```
+
+#### LIFO Queue
+
+```js
+// Add to front of queue (Last In, First Out)
+await queue.add('priority-task', { data: 'urgent' }, {
+  lifo: true
+});
+```
+
+---
+
+## Queue.addBulk()
+
+Creates multiple jobs and adds them to the queue in a single operation. This is more efficient than calling `add()` multiple times.
+
+### Signature
+
+```ts
+addBulk(jobs: { name?: string, data: object, opts?: JobOpts }[]): Promise<Job[]>
+```
+
+### Parameters
+
+<ParamField path="jobs" type="array" required>
+  Array of job specifications. Each job follows the same signature as `Queue.add()`.
+</ParamField>
+
+### Returns
+
+<ResponseField name="jobs" type="Promise<Job[]>">
+  A promise that resolves to an array of created Job instances.
+</ResponseField>
+
+### Examples
+
+#### Bulk Add Multiple Jobs
+
+```js
+const jobs = await queue.addBulk([
+  { name: 'email', data: { to: 'user1@example.com' } },
+  { name: 'email', data: { to: 'user2@example.com' } },
+  { name: 'email', data: { to: 'user3@example.com' } }
+]);
+
+console.log(`Created ${jobs.length} jobs`);
+```
+
+#### Bulk Add with Options
+
+```js
+await queue.addBulk([
+  {
+    name: 'process',
+    data: { id: 1 },
+    opts: { priority: 1 }
+  },
+  {
+    name: 'process',
+    data: { id: 2 },
+    opts: { priority: 2 }
+  },
+  {
+    name: 'process',
+    data: { id: 3 },
+    opts: { delay: 5000 }
+  }
+]);
+```
+
+#### Bulk Add from Database Records
+
+```js
+const users = await db.getUsers();
+
+const jobSpecs = users.map(user => ({
+  name: 'welcome-email',
+  data: {
+    email: user.email,
+    name: user.name
+  },
+  opts: {
+    attempts: 3,
+    backoff: 2000
+  }
+}));
+
+await queue.addBulk(jobSpecs);
+```
+
+## Important Notes
+
+<Warning>
+**Job Cleanup:** Completed and failed jobs are stored in Redis indefinitely by default. Use `removeOnComplete` and `removeOnFail` options to prevent Redis from running out of memory.
+</Warning>
+
+<Note>
+**Named Jobs:** You need to define processors for all named jobs you add, unless you use `'*'` as the processor name.
+</Note>
+
+<Note>
+**Repeatable Jobs:** Adding a job with the `repeat` option creates a Repeatable Job configuration AND schedules the first run. Repeatable jobs are not included in methods like `getJobs()`. Use `getRepeatableJobs()` instead.
+</Note>
+
+<Note>
+**Job ID Uniqueness:** When using `jobId`, repeated jobs with different repeat options can have the same ID, but regular jobs cannot share IDs.
+</Note>
+
+### Timeout Implementation
+
+Jobs are NOT proactively stopped after the timeout. The job is marked as failed and the promise is rejected, but Bull cannot stop the processor function externally.
+
+To stop a job after timeout:
+- Have the job periodically check `job.getState()` and exit if status becomes 'failed'
+- Implement the job as a cancelable promise with a `cancel()` method
+- Add a listener for the 'failed' event and stop the job externally

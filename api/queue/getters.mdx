@@ -1,0 +1,527 @@
+---
+title: "Getters & Counters"
+description: "Retrieve jobs and count jobs by status from the queue"
+---
+
+## Overview
+
+Bull provides methods to retrieve jobs and count jobs by their status. These methods are useful for monitoring queue health, building dashboards, and managing job lifecycles.
+
+## GetterOpts Interface
+
+```ts
+interface GetterOpts {
+  excludeData: boolean; // Exclude the data field of the jobs
+}
+```
+
+---
+
+## Retrieving Jobs
+
+### Queue.getJob()
+
+Returns a job by its ID.
+
+#### Signature
+
+```ts
+getJob(jobId: string): Promise<Job>
+```
+
+#### Parameters
+
+<ParamField path="jobId" type="string" required>
+  The unique identifier of the job.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="job" type="Promise<Job | null>">
+  A promise that resolves to the Job instance, or null if the job cannot be found.
+</ResponseField>
+
+#### Example
+
+```js
+const job = await queue.getJob('12345');
+
+if (job) {
+  console.log(`Job ${job.id} status: ${await job.getState()}`);
+} else {
+  console.log('Job not found');
+}
+```
+
+<Note>
+This method does not return Repeatable Job configurations. Use `getRepeatableJobs()` for that.
+</Note>
+
+---
+
+### Queue.getJobs()
+
+Returns an array of jobs with specific statuses.
+
+#### Signature
+
+```ts
+getJobs(types: JobStatus[], start?: number, end?: number, asc?: boolean): Promise<Job[]>
+```
+
+#### Parameters
+
+<ParamField path="types" type="JobStatus[]" required>
+  Array of job statuses to retrieve. Valid values: `'completed'`, `'failed'`, `'delayed'`, `'active'`, `'waiting'`, `'paused'`.
+</ParamField>
+
+<ParamField path="start" type="number" default="0">
+  Starting index for range (0-based).
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  Ending index for range (-1 means all).
+</ParamField>
+
+<ParamField path="asc" type="boolean" default="false">
+  If true, return jobs in ascending order.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="jobs" type="Promise<Job[]>">
+  A promise that resolves to an array of Job instances.
+</ResponseField>
+
+#### Examples
+
+```js
+// Get all completed jobs
+const completed = await queue.getJobs(['completed']);
+
+// Get first 10 failed jobs
+const failed = await queue.getJobs(['failed'], 0, 9);
+
+// Get all active and waiting jobs
+const active = await queue.getJobs(['active', 'waiting']);
+
+// Get jobs in ascending order
+const oldest = await queue.getJobs(['completed'], 0, 4, true);
+```
+
+<Warning>
+The `start` and `end` parameters are applied **per job status**. For example, `getJobs(['completed', 'active'], 0, 4)` returns the first 5 completed jobs AND the first 5 active jobs (up to 10 total).
+</Warning>
+
+<Note>
+This method does not return Repeatable Job configurations. Use `getRepeatableJobs()` for that.
+</Note>
+
+---
+
+## Status-Specific Getters
+
+These methods retrieve jobs in specific states with optional range and data exclusion.
+
+### Queue.getWaiting()
+
+```ts
+getWaiting(start?: number, end?: number, opts?: GetterOpts): Promise<Job[]>
+```
+
+Returns jobs waiting to be processed.
+
+#### Example
+
+```js
+const waiting = await queue.getWaiting(0, 9);
+console.log(`${waiting.length} jobs waiting`);
+```
+
+---
+
+### Queue.getActive()
+
+```ts
+getActive(start?: number, end?: number, opts?: GetterOpts): Promise<Job[]>
+```
+
+Returns jobs currently being processed.
+
+#### Example
+
+```js
+const active = await queue.getActive();
+for (const job of active) {
+  console.log(`Job ${job.id} is being processed`);
+}
+```
+
+---
+
+### Queue.getDelayed()
+
+```ts
+getDelayed(start?: number, end?: number, opts?: GetterOpts): Promise<Job[]>
+```
+
+Returns jobs that are delayed (scheduled for future processing).
+
+#### Example
+
+```js
+const delayed = await queue.getDelayed();
+for (const job of delayed) {
+  const delay = job.opts.delay;
+  console.log(`Job ${job.id} delayed by ${delay}ms`);
+}
+```
+
+---
+
+### Queue.getCompleted()
+
+```ts
+getCompleted(start?: number, end?: number, opts?: GetterOpts): Promise<Job[]>
+```
+
+Returns successfully completed jobs.
+
+#### Example
+
+```js
+// Get last 100 completed jobs without their data
+const completed = await queue.getCompleted(0, 99, { excludeData: true });
+console.log(`Retrieved ${completed.length} completed jobs`);
+```
+
+---
+
+### Queue.getFailed()
+
+```ts
+getFailed(start?: number, end?: number, opts?: GetterOpts): Promise<Job[]>
+```
+
+Returns failed jobs.
+
+#### Example
+
+```js
+const failed = await queue.getFailed(0, 9);
+for (const job of failed) {
+  console.log(`Job ${job.id} failed: ${job.failedReason}`);
+}
+```
+
+---
+
+## Job Counters
+
+### Queue.count()
+
+Returns the total number of jobs waiting or delayed.
+
+#### Signature
+
+```ts
+count(): Promise<number>
+```
+
+#### Returns
+
+<ResponseField name="count" type="Promise<number>">
+  Total number of jobs in waiting or delayed state.
+</ResponseField>
+
+#### Example
+
+```js
+const totalJobs = await queue.count();
+console.log(`${totalJobs} jobs pending`);
+```
+
+<Note>
+This value may only be accurate for a brief moment since other processes may be adding or processing jobs.
+</Note>
+
+---
+
+### Queue.getJobCounts()
+
+Returns job counts for all statuses.
+
+#### Signature
+
+```ts
+getJobCounts(): Promise<JobCounts>
+```
+
+#### Returns
+
+<ResponseField name="counts" type="Promise<JobCounts>">
+  Object containing counts for each job status.
+  
+  ```typescript
+  interface JobCounts {
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    delayed: number;
+  }
+  ```
+</ResponseField>
+
+#### Example
+
+```js
+const counts = await queue.getJobCounts();
+console.log('Queue status:');
+console.log(`  Waiting: ${counts.waiting}`);
+console.log(`  Active: ${counts.active}`);
+console.log(`  Completed: ${counts.completed}`);
+console.log(`  Failed: ${counts.failed}`);
+console.log(`  Delayed: ${counts.delayed}`);
+```
+
+---
+
+### Status-Specific Counters
+
+#### Queue.getWaitingCount()
+
+```ts
+getWaitingCount(): Promise<number>
+```
+
+Returns the count of jobs waiting to be processed.
+
+```js
+const waiting = await queue.getWaitingCount();
+```
+
+---
+
+#### Queue.getActiveCount()
+
+```ts
+getActiveCount(): Promise<number>
+```
+
+Returns the count of jobs currently being processed.
+
+```js
+const active = await queue.getActiveCount();
+```
+
+---
+
+#### Queue.getDelayedCount()
+
+```ts
+getDelayedCount(): Promise<number>
+```
+
+Returns the count of delayed jobs.
+
+```js
+const delayed = await queue.getDelayedCount();
+```
+
+---
+
+#### Queue.getCompletedCount()
+
+```ts
+getCompletedCount(): Promise<number>
+```
+
+Returns the count of completed jobs.
+
+```js
+const completed = await queue.getCompletedCount();
+```
+
+---
+
+#### Queue.getFailedCount()
+
+```ts
+getFailedCount(): Promise<number>
+```
+
+Returns the count of failed jobs.
+
+```js
+const failed = await queue.getFailedCount();
+```
+
+---
+
+#### Queue.getPausedCount()
+
+```ts
+getPausedCount(): Promise<number>
+```
+
+<Warning>
+**DEPRECATED:** Since only the queue can be paused, `getWaitingCount()` gives the same result.
+</Warning>
+
+---
+
+## Additional Getters
+
+### Queue.getWorkers()
+
+Returns information about workers currently processing jobs.
+
+#### Signature
+
+```ts
+getWorkers(): Promise<Array<Object>>
+```
+
+#### Returns
+
+<ResponseField name="workers" type="Promise<Array<Object>>">
+  Array of worker objects with the same fields as Redis CLIENT LIST command.
+</ResponseField>
+
+#### Example
+
+```js
+const workers = await queue.getWorkers();
+console.log(`${workers.length} workers active`);
+
+workers.forEach(worker => {
+  console.log(`Worker ${worker.id}: ${worker.addr}`);
+});
+```
+
+---
+
+### Queue.getMetrics()
+
+Returns metrics for completed or failed jobs.
+
+#### Signature
+
+```ts
+getMetrics(type: 'completed' | 'failed', start = 0, end = -1): Promise<{
+  meta: {
+    count: number;
+    prevTS: number;
+    prevCount: number;
+  };
+  data: number[];
+  count: number;
+}>
+```
+
+#### Parameters
+
+<ParamField path="type" type="'completed' | 'failed'" required>
+  Type of metrics to retrieve.
+</ParamField>
+
+<ParamField path="start" type="number" default="0">
+  Start index for data points.
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  End index for data points.
+</ParamField>
+
+#### Example
+
+```js
+const metrics = await queue.getMetrics('completed');
+console.log(`Total completed: ${metrics.count}`);
+console.log(`Data points: ${metrics.data.length}`);
+```
+
+<Note>
+Metrics must be enabled in the queue constructor options with `metrics: { maxDataPoints: number }`.
+</Note>
+
+---
+
+## Common Patterns
+
+### Queue Dashboard
+
+```js
+async function getQueueStatus() {
+  const counts = await queue.getJobCounts();
+  const workers = await queue.getWorkers();
+  const isPaused = await queue.isPaused();
+  
+  return {
+    status: isPaused ? 'paused' : 'active',
+    workers: workers.length,
+    jobs: counts
+  };
+}
+
+app.get('/api/queue/status', async (req, res) => {
+  const status = await getQueueStatus();
+  res.json(status);
+});
+```
+
+### Failed Job Recovery
+
+```js
+async function retryFailedJobs() {
+  const failed = await queue.getFailed();
+  
+  console.log(`Retrying ${failed.length} failed jobs`);
+  
+  for (const job of failed) {
+    await job.retry();
+  }
+}
+```
+
+### Job Monitoring
+
+```js
+setInterval(async () => {
+  const counts = await queue.getJobCounts();
+  
+  if (counts.failed > 100) {
+    console.warn('High number of failed jobs:', counts.failed);
+    // Send alert
+  }
+  
+  if (counts.waiting > 1000) {
+    console.warn('Queue backlog:', counts.waiting);
+    // Scale up workers
+  }
+}, 60000); // Check every minute
+```
+
+### Pagination
+
+```js
+async function getCompletedJobsPage(page = 0, pageSize = 50) {
+  const start = page * pageSize;
+  const end = start + pageSize - 1;
+  
+  const jobs = await queue.getCompleted(start, end, {
+    excludeData: true // Faster if you don't need job data
+  });
+  
+  const total = await queue.getCompletedCount();
+  
+  return {
+    jobs,
+    page,
+    pageSize,
+    total,
+    totalPages: Math.ceil(total / pageSize)
+  };
+}
+```

@@ -1,0 +1,425 @@
+---
+title: Pause and Resume
+description: Control queue processing by pausing and resuming workers globally or locally
+---
+
+Pause and resume functionality allows you to control when a queue processes jobs. This is essential for maintenance, graceful shutdowns, or temporarily halting job processing without losing queued jobs.
+
+## Basic Usage
+
+Pause and resume a queue:
+
+```javascript
+const Queue = require('bull');
+const queue = new Queue('tasks');
+
+// Pause the queue
+await queue.pause();
+console.log('Queue is paused');
+
+// Resume the queue
+await queue.resume();
+console.log('Queue is resumed');
+```
+
+<Info>
+Pausing a queue prevents it from processing **new jobs**, but jobs currently being processed will continue until completion.
+</Info>
+
+## Local vs Global Pausing
+
+Bull supports two types of pausing:
+
+<Tabs>
+  <Tab title="Global Pause">
+    Pauses all workers across all queue instances:
+    
+    ```javascript
+    // Pause globally (affects all workers)
+    await queue.pause();
+    // or explicitly
+    await queue.pause(false);
+    
+    // Resume globally
+    await queue.resume();
+    // or explicitly
+    await queue.resume(false);
+    ```
+    
+    <Info>
+    Global pause affects **all workers** in **all queue instances** for a given queue name. Useful for system-wide maintenance.
+    </Info>
+  </Tab>
+  
+  <Tab title="Local Pause">
+    Pauses only the current worker:
+    
+    ```javascript
+    // Pause locally (only this worker)
+    await queue.pause(true);
+    
+    // Resume locally (only this worker)
+    await queue.resume(true);
+    ```
+    
+    <Info>
+    Local pause only affects **this specific worker instance**. Other workers continue processing. Useful for graceful shutdown of individual workers.
+    </Info>
+  </Tab>
+</Tabs>
+
+## Pause Method Signature
+
+```typescript
+pause(isLocal?: boolean, doNotWaitActive?: boolean): Promise
+```
+
+### Parameters
+
+- `isLocal`: If `true`, pauses only this worker. If `false` or omitted, pauses globally.
+- `doNotWaitActive`: If `true`, resolves immediately without waiting for active jobs. If `false` or omitted, waits for active jobs to finish.
+
+## Waiting for Active Jobs
+
+<Tabs>
+  <Tab title="Wait for Completion">
+    Default behavior - waits for active jobs to finish:
+    
+    ```javascript
+    // Pause and wait for active jobs to complete
+    await queue.pause();
+    console.log('All active jobs completed, queue paused');
+    ```
+  </Tab>
+  
+  <Tab title="Immediate Pause">
+    Don't wait for active jobs:
+    
+    ```javascript
+    // Pause immediately (active jobs continue in background)
+    await queue.pause(false, true);
+    console.log('Queue paused (active jobs still running)');
+    ```
+  </Tab>
+</Tabs>
+
+## Checking Pause State
+
+Check if a queue is paused:
+
+```javascript
+// Check global pause state
+const isGloballyPaused = await queue.isPaused();
+console.log('Globally paused:', isGloballyPaused);
+
+// Check local pause state
+const isLocallyPaused = await queue.isPaused(true);
+console.log('Locally paused:', isLocallyPaused);
+```
+
+<Note>
+`isPaused()` without arguments checks global state. Pass `true` to check if this specific worker instance is paused.
+</Note>
+
+## Waiting for Current Jobs
+
+Wait for all currently processing jobs to finish:
+
+```javascript
+// Wait for active jobs without pausing
+await queue.whenCurrentJobsFinished();
+console.log('All current jobs are finished');
+```
+
+<Info>
+`whenCurrentJobsFinished()` is useful for graceful shutdowns or when you need to ensure all active work completes before proceeding.
+</Info>
+
+## Common Use Cases
+
+### Graceful Shutdown
+
+```javascript
+const queue = new Queue('app-tasks');
+
+process.on('SIGTERM', async () => {
+  console.log('Shutting down gracefully...');
+  
+  // Pause queue locally (stop taking new jobs)
+  await queue.pause(true);
+  
+  // Wait for active jobs to complete
+  await queue.whenCurrentJobsFinished();
+  
+  // Close queue connections
+  await queue.close();
+  
+  console.log('Shutdown complete');
+  process.exit(0);
+});
+```
+
+### Maintenance Window
+
+```javascript
+async function performMaintenance() {
+  console.log('Starting maintenance...');
+  
+  // Pause globally
+  await queue.pause();
+  
+  // Perform maintenance tasks
+  await backupDatabase();
+  await updateSchema();
+  
+  // Resume processing
+  await queue.resume();
+  
+  console.log('Maintenance complete');
+}
+```
+
+### Temporary Worker Shutdown
+
+```javascript
+const worker1 = new Queue('shared-queue');
+const worker2 = new Queue('shared-queue');
+
+worker1.process(processor);
+worker2.process(processor);
+
+// Pause only worker1 (worker2 continues)
+await worker1.pause(true);
+
+// Later, resume worker1
+await worker1.resume(true);
+```
+
+### Rate Limit Recovery
+
+```javascript
+const apiQueue = new Queue('api-calls');
+
+apiQueue.on('failed', async (job, err) => {
+  if (err.message.includes('rate limit')) {
+    console.log('Rate limit hit, pausing for 1 minute...');
+    
+    // Pause queue
+    await apiQueue.pause();
+    
+    // Wait for rate limit to reset
+    setTimeout(async () => {
+      await apiQueue.resume();
+      console.log('Queue resumed after rate limit');
+    }, 60000);
+  }
+});
+```
+
+## Events
+
+Monitor pause and resume events:
+
+```javascript
+queue.on('paused', () => {
+  console.log('Queue has been paused');
+});
+
+queue.on('resumed', () => {
+  console.log('Queue has been resumed');
+});
+
+// Pause the queue
+await queue.pause();
+// Logs: "Queue has been paused"
+
+// Resume the queue
+await queue.resume();
+// Logs: "Queue has been resumed"
+```
+
+## Example from README
+
+From the Bull README:
+
+```javascript
+queue.pause().then(function () {
+  // queue is paused now
+});
+
+queue.resume().then(function () {
+  // queue is resumed now
+});
+```
+
+<Note>
+A queue can be paused and resumed globally (pass `true` to pause processing for just this worker).
+</Note>
+
+## Important Behaviors
+
+### Pausing Already Paused Queue
+
+```javascript
+await queue.pause();
+await queue.pause();  // Does nothing
+```
+
+<Info>
+Pausing a queue that is already paused does nothing.
+</Info>
+
+### Resuming Not Paused Queue
+
+```javascript
+await queue.resume();  // Does nothing if not paused
+```
+
+<Info>
+Resuming a queue that is not paused does nothing.
+</Info>
+
+### Global Resume vs Local Pause
+
+```javascript
+// Worker paused locally
+await queue.pause(true);
+
+// Global resume does NOT resume locally paused workers
+await queue.resume(false);
+
+const stillPaused = await queue.isPaused(true);
+console.log(stillPaused);  // true
+
+// Must resume locally
+await queue.resume(true);
+```
+
+<Warning>
+Resuming a queue globally will **not** resume workers that have been paused locally. For locally paused workers, you must call `resume(true)` directly on their instances.
+</Warning>
+
+## Advanced Patterns
+
+### Circuit Breaker Pattern
+
+```javascript
+class CircuitBreaker {
+  constructor(queue, threshold = 5) {
+    this.queue = queue;
+    this.failures = 0;
+    this.threshold = threshold;
+    
+    queue.on('failed', () => this.onFailed());
+    queue.on('completed', () => this.onSuccess());
+  }
+  
+  async onFailed() {
+    this.failures++;
+    
+    if (this.failures >= this.threshold) {
+      console.log('Circuit breaker opened');
+      await this.queue.pause();
+      
+      // Try to resume after 30 seconds
+      setTimeout(() => this.reset(), 30000);
+    }
+  }
+  
+  onSuccess() {
+    this.failures = 0;
+  }
+  
+  async reset() {
+    console.log('Attempting to close circuit breaker');
+    this.failures = 0;
+    await this.queue.resume();
+  }
+}
+
+const queue = new Queue('protected-api');
+const breaker = new CircuitBreaker(queue);
+```
+
+### Scheduled Pause/Resume
+
+```javascript
+const schedule = require('node-schedule');
+
+// Pause queue every night at midnight
+schedule.scheduleJob('0 0 * * *', async () => {
+  console.log('Nightly pause');
+  await queue.pause();
+});
+
+// Resume queue every morning at 6 AM
+schedule.scheduleJob('0 6 * * *', async () => {
+  console.log('Morning resume');
+  await queue.resume();
+});
+```
+
+### Conditional Processing
+
+```javascript
+let processingEnabled = true;
+
+async function toggleProcessing(enabled) {
+  processingEnabled = enabled;
+  
+  if (enabled) {
+    await queue.resume();
+    console.log('Processing enabled');
+  } else {
+    await queue.pause();
+    console.log('Processing disabled');
+  }
+}
+
+// Control via API endpoint
+app.post('/admin/queue/toggle', async (req, res) => {
+  await toggleProcessing(req.body.enabled);
+  res.json({ success: true });
+});
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use local pause for graceful shutdown">
+    ```javascript
+    process.on('SIGTERM', async () => {
+      await queue.pause(true);  // Stop this worker only
+      await queue.whenCurrentJobsFinished();
+      await queue.close();
+    });
+    ```
+  </Step>
+  
+  <Step title="Use global pause for maintenance">
+    ```javascript
+    // Stop all workers for system maintenance
+    await queue.pause(false);
+    await performSystemMaintenance();
+    await queue.resume(false);
+    ```
+  </Step>
+  
+  <Step title="Always wait for active jobs when pausing">
+    ```javascript
+    // Good - ensures clean shutdown
+    await queue.pause(true, false);
+    
+    // Risky - jobs may be interrupted
+    await queue.pause(true, true);
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+Combine `pause()` with `whenCurrentJobsFinished()` for the most reliable graceful shutdowns.
+</Tip>
+
+<Warning>
+Jobs that are currently active when you pause will continue to completion. If you need to stop them immediately, you'll need to implement cancellation logic within your job processors.
+</Warning>

@@ -1,0 +1,439 @@
+---
+title: Retries and Backoff
+description: Automatically retry failed jobs with configurable backoff strategies in Bull
+---
+
+Retries and backoff strategies allow jobs to be automatically retried when they fail, with intelligent delays between attempts. This is essential for handling transient errors like network issues, rate limits, or temporary service unavailability.
+
+## Basic Retries
+
+Enable retries by setting the `attempts` option:
+
+```javascript
+const Queue = require('bull');
+const apiQueue = new Queue('api-calls');
+
+apiQueue.process(async (job) => {
+  const response = await fetch(job.data.url);
+  if (!response.ok) throw new Error('API call failed');
+  return await response.json();
+});
+
+// Retry up to 3 times on failure
+await apiQueue.add(
+  { url: 'https://api.example.com/data' },
+  { attempts: 3 }
+);
+```
+
+<Info>
+Without the `attempts` option, jobs are **not retried** when they fail. They move directly to the failed state.
+</Info>
+
+## Job Options Interface
+
+```typescript
+interface JobOpts {
+  attempts: number;              // Total number of attempts to try the job
+  backoff: number | BackoffOpts; // Backoff setting for automatic retries
+                                 // Default strategy: 'fixed'
+}
+```
+
+## Backoff Strategies
+
+Backoff strategies control the delay between retry attempts:
+
+```typescript
+interface BackoffOpts {
+  type: string;     // 'fixed', 'exponential', or custom strategy name
+  delay: number;    // Backoff delay in milliseconds
+  options?: any;    // Options for custom strategies
+}
+```
+
+### Fixed Backoff
+
+Wait a constant time between retries:
+
+<Tabs>
+  <Tab title="Number Shorthand">
+    ```javascript
+    // Wait 5 seconds between each retry
+    await queue.add(
+      { task: 'process' },
+      {
+        attempts: 3,
+        backoff: 5000  // Simple number = fixed backoff
+      }
+    );
+    
+    // Retry timeline:
+    // Attempt 1: Immediate
+    // Attempt 2: After 5 seconds
+    // Attempt 3: After 5 seconds
+    ```
+  </Tab>
+  
+  <Tab title="Explicit Configuration">
+    ```javascript
+    await queue.add(
+      { task: 'process' },
+      {
+        attempts: 3,
+        backoff: {
+          type: 'fixed',
+          delay: 5000
+        }
+      }
+    );
+    ```
+  </Tab>
+</Tabs>
+
+### Exponential Backoff
+
+Double the delay after each retry:
+
+```javascript
+await queue.add(
+  { task: 'api-call' },
+  {
+    attempts: 5,
+    backoff: {
+      type: 'exponential',
+      delay: 1000  // Initial delay: 1 second
+    }
+  }
+);
+
+// Retry timeline:
+// Attempt 1: Immediate
+// Attempt 2: After 1 second
+// Attempt 3: After 2 seconds
+// Attempt 4: After 4 seconds
+// Attempt 5: After 8 seconds
+```
+
+<Info>
+Exponential backoff is ideal for handling rate limits or temporary outages, as it gives services more time to recover between retries.
+</Info>
+
+## Custom Backoff Strategies
+
+Define custom backoff strategies in queue settings:
+
+```javascript
+const Queue = require('bull');
+
+const myQueue = new Queue('custom-backoff', {
+  settings: {
+    backoffStrategies: {
+      // Simple jitter strategy
+      jitter: function (attemptsMade, err) {
+        return 5000 + Math.random() * 500;
+      },
+      
+      // Strategy with options
+      binaryExponential: function (attemptsMade, err, options) {
+        const delay = options?.delay || 1000;
+        const truncate = options?.truncate || 10;
+        
+        return Math.round(
+          Math.random() * 
+          (Math.pow(2, Math.min(attemptsMade, truncate)) - 1) * 
+          delay
+        );
+      },
+      
+      // Error-based strategy
+      adaptive: function (attemptsMade, err) {
+        // Longer delay for rate limit errors
+        if (err.message.includes('rate limit')) {
+          return 60000; // 1 minute
+        }
+        // Shorter delay for other errors
+        return 5000;
+      }
+    }
+  }
+});
+```
+
+### Using Custom Strategies
+
+<Tabs>
+  <Tab title="Simple Custom Strategy">
+    ```javascript
+    // Use the 'jitter' strategy defined above
+    await myQueue.add(
+      { foo: 'bar' },
+      {
+        attempts: 3,
+        backoff: {
+          type: 'jitter'
+        }
+      }
+    );
+    ```
+  </Tab>
+  
+  <Tab title="With Options">
+    ```javascript
+    // Use strategy with custom options
+    await myQueue.add(
+      { foo: 'bar' },
+      {
+        attempts: 10,
+        backoff: {
+          type: 'binaryExponential',
+          options: {
+            delay: 500,
+            truncate: 5
+          }
+        }
+      }
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Error-Based">
+    ```javascript
+    // Adaptive strategy based on error type
+    await myQueue.add(
+      { url: 'https://api.example.com' },
+      {
+        attempts: 5,
+        backoff: {
+          type: 'adaptive'
+        }
+      }
+    );
+    
+    myQueue.process(async (job) => {
+      const response = await fetch(job.data.url);
+      
+      if (response.status === 429) {
+        throw new Error('rate limit exceeded');
+      }
+      
+      return await response.json();
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Advanced Custom Backoff
+
+From PATTERNS.md, here's a complete example:
+
+```javascript
+const Queue = require('bull');
+
+function MySpecificError() {}
+
+const myQueue = new Queue('Server C', {
+  settings: {
+    backoffStrategies: {
+      foo: function (attemptsMade, err) {
+        // Different delays based on error type
+        if (err instanceof MySpecificError) {
+          return 10000;  // 10 seconds for specific errors
+        }
+        return 1000;     // 1 second for other errors
+      }
+    }
+  }
+});
+
+myQueue.process(function (job, done) {
+  if (job.data.msg === 'Specific Error') {
+    throw new MySpecificError();
+  } else {
+    throw new Error();
+  }
+});
+
+// Add jobs with custom backoff
+await myQueue.add(
+  { msg: 'Hello' },
+  { attempts: 3, backoff: { type: 'foo' } }
+);
+
+await myQueue.add(
+  { msg: 'Specific Error' },
+  { attempts: 3, backoff: { type: 'foo' } }
+);
+```
+
+## Monitoring Retries
+
+Track retry attempts and failures:
+
+```javascript
+const queue = new Queue('monitored-retries');
+
+queue.on('failed', (job, err) => {
+  console.log(`Job ${job.id} failed:`, err.message);
+  console.log(`Attempt ${job.attemptsMade} of ${job.opts.attempts}`);
+  
+  if (job.attemptsMade < job.opts.attempts) {
+    console.log('Will retry...');
+  } else {
+    console.log('All retry attempts exhausted');
+  }
+});
+
+queue.on('completed', (job, result) => {
+  if (job.attemptsMade > 1) {
+    console.log(`Job ${job.id} succeeded after ${job.attemptsMade} attempts`);
+  }
+});
+```
+
+## Common Use Cases
+
+<Steps>
+  <Step title="API Rate Limits">
+    ```javascript
+    const apiQueue = new Queue('rate-limited-api', {
+      settings: {
+        backoffStrategies: {
+          rateLimitBackoff: (attemptsMade, err) => {
+            // Extract retry-after header if available
+            if (err.retryAfter) {
+              return err.retryAfter * 1000;
+            }
+            // Exponential backoff otherwise
+            return Math.pow(2, attemptsMade) * 1000;
+          }
+        }
+      }
+    });
+    
+    await apiQueue.add(
+      { endpoint: '/users' },
+      {
+        attempts: 5,
+        backoff: { type: 'rateLimitBackoff' }
+      }
+    );
+    ```
+  </Step>
+  
+  <Step title="Network Failures">
+    ```javascript
+    // Retry network requests with exponential backoff
+    await queue.add(
+      { url: 'https://unreliable-service.com' },
+      {
+        attempts: 5,
+        backoff: {
+          type: 'exponential',
+          delay: 2000  // Start with 2 seconds
+        },
+        timeout: 30000  // 30 second timeout per attempt
+      }
+    );
+    ```
+  </Step>
+  
+  <Step title="Database Deadlocks">
+    ```javascript
+    // Quick retries for transient database issues
+    await dbQueue.add(
+      { query: 'UPDATE ...' },
+      {
+        attempts: 3,
+        backoff: {
+          type: 'fixed',
+          delay: 100  // Quick retry for deadlocks
+        }
+      }
+    );
+    ```
+  </Step>
+</Steps>
+
+## Combining with Other Options
+
+```javascript
+await queue.add(
+  { task: 'critical-operation' },
+  {
+    attempts: 5,              // Retry up to 5 times
+    backoff: {
+      type: 'exponential',
+      delay: 1000
+    },
+    priority: 1,              // High priority
+    timeout: 30000,           // 30 second timeout per attempt
+    removeOnFail: false       // Keep failed jobs for inspection
+  }
+);
+```
+
+## Best Practices
+
+<Tip>
+**Choose the right strategy:**
+- **Fixed**: Simple retries for predictable issues
+- **Exponential**: Rate limits, service outages
+- **Custom**: Complex scenarios requiring error-specific logic
+</Tip>
+
+<Warning>
+**Set reasonable attempt limits**: Too many retries can delay error detection and waste resources. Most jobs should use 3-5 attempts.
+</Warning>
+
+<Note>
+**Combine with timeouts**: Always set a timeout when using retries to prevent individual attempts from hanging indefinitely:
+
+```javascript
+await queue.add(data, {
+  attempts: 3,
+  backoff: 5000,
+  timeout: 10000  // Kill hung attempts after 10 seconds
+});
+```
+</Note>
+
+## Accessing Attempt Information
+
+Within a job processor, access retry information:
+
+```javascript
+queue.process(async (job) => {
+  console.log(`Attempt ${job.attemptsMade} of ${job.opts.attempts}`);
+  
+  try {
+    return await riskyOperation(job.data);
+  } catch (error) {
+    // Log retry info before failing
+    console.error(`Attempt ${job.attemptsMade} failed:`, error);
+    throw error;
+  }
+});
+```
+
+<Info>
+Use `job.attemptsMade` to implement attempt-specific logic, like trying different strategies on later attempts.
+</Info>
+
+## Preventing Retries
+
+Force a job to fail without retrying:
+
+```javascript
+queue.process(async (job) => {
+  try {
+    return await processJob(job);
+  } catch (error) {
+    if (error.code === 'INVALID_INPUT') {
+      // Don't retry validation errors
+      await job.discard();
+    }
+    throw error;
+  }
+});
+```

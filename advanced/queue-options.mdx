@@ -1,0 +1,472 @@
+---
+title: Queue Options
+description: Configure queue behavior with QueueOptions
+---
+
+When creating a new Bull queue, you can configure its behavior using the `QueueOptions` interface.
+
+## Constructor
+
+```typescript
+Queue(queueName: string, url?: string, opts?: QueueOptions): Queue
+```
+
+## Interface
+
+```typescript
+interface QueueOptions {
+  createClient?: (type: 'client' | 'subscriber' | 'bclient', config?: Redis.RedisOptions) => Redis.Redis | Redis.Cluster;
+  limiter?: RateLimiter;
+  redis?: RedisOpts;
+  prefix?: string;
+  metrics?: MetricsOpts;
+  defaultJobOptions?: JobOpts;
+  settings?: AdvancedSettings;
+}
+```
+
+## Options
+
+### redis
+
+<ParamField path="redis" type="RedisOpts | string">
+  Redis connection options. Can be an ioredis options object or a connection URL string.
+
+  ```typescript
+  interface RedisOpts {
+    port?: number; // default: 6379
+    host?: string; // default: 'localhost'
+    db?: number; // default: 0
+    password?: string;
+  }
+  ```
+
+  **Example:**
+  ```javascript
+  // Using connection string
+  const queue = new Queue('myqueue', 'redis://mypassword@myredis.server.com:1234');
+
+  // Using options object
+  const queue = new Queue('myqueue', {
+    redis: {
+      port: 6379,
+      host: '127.0.0.1',
+      password: 'foobared'
+    }
+  });
+  ```
+
+  See [ioredis documentation](https://github.com/luin/ioredis/blob/master/API.md) for all available options.
+</ParamField>
+
+### createClient
+
+<ParamField path="createClient" type="function">
+  Custom function to create Redis client instances. Useful for sharing connections or using custom Redis configurations.
+
+  ```typescript
+  (type: 'client' | 'subscriber' | 'bclient', config?: Redis.RedisOptions) => Redis.Redis | Redis.Cluster
+  ```
+
+  **Connection types:**
+  - `client` - Main client for queue operations (can be shared)
+  - `subscriber` - Event subscriber client (can be shared)
+  - `bclient` - Blocking client for job retrieval (must be unique per queue)
+
+  **Example:**
+  ```javascript
+  const Redis = require('ioredis');
+  const sharedClient = new Redis();
+  const sharedSubscriber = new Redis();
+
+  const queue = new Queue('myqueue', {
+    createClient: (type, config) => {
+      switch(type) {
+        case 'client':
+          return sharedClient;
+        case 'subscriber':
+          return sharedSubscriber;
+        case 'bclient':
+          return new Redis({ ...config, maxRetriesPerRequest: null });
+      }
+    }
+  });
+  ```
+
+  <Note>
+  When using `createClient`, you must manually disconnect shared connections after closing all queues.
+  </Note>
+</ParamField>
+
+### prefix
+
+<ParamField path="prefix" type="string" default="bull">
+  Prefix for all Redis keys created by this queue.
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    prefix: 'myapp'
+  });
+  // Keys will be: myapp:myqueue:wait, myapp:myqueue:active, etc.
+  ```
+</ParamField>
+
+### limiter
+
+<ParamField path="limiter" type="RateLimiter">
+  Rate limiting configuration to control job processing rate.
+
+  ```typescript
+  interface RateLimiter {
+    max: number; // Max number of jobs processed
+    duration: number; // per duration in milliseconds
+    bounceBack?: boolean; // default: false
+    groupKey?: string; // allows grouping of jobs
+  }
+  ```
+
+  **Example:**
+  ```javascript
+  const queue = new Queue('api-calls', {
+    limiter: {
+      max: 100, // Process max 100 jobs
+      duration: 60000, // per 60 seconds
+      bounceBack: false // Jobs stay in waiting queue when rate limited
+    }
+  });
+  ```
+
+  **Group-based rate limiting:**
+  ```javascript
+  const queue = new Queue('requests', {
+    limiter: {
+      max: 5,
+      duration: 1000,
+      groupKey: 'userId' // Rate limit per userId from job.data
+    }
+  });
+
+  queue.add({ userId: '123', request: '...' });
+  // Max 5 jobs per second for each unique userId
+  ```
+</ParamField>
+
+### defaultJobOptions
+
+<ParamField path="defaultJobOptions" type="JobOpts">
+  Default options applied to all jobs added to this queue. Can be overridden per job.
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 2000
+      },
+      removeOnComplete: true,
+      removeOnFail: false
+    }
+  });
+  ```
+
+  See [Job Options](/advanced/job-options) for all available options.
+</ParamField>
+
+### settings
+
+<ParamField path="settings" type="AdvancedSettings">
+  Advanced queue behavior settings. See the AdvancedSettings section below.
+</ParamField>
+
+### metrics
+
+<ParamField path="metrics" type="MetricsOpts">
+  Enable metrics collection for monitoring queue performance.
+
+  ```typescript
+  interface MetricsOpts {
+    maxDataPoints?: number; // Max number of data points to collect (default granularity: 1 minute)
+  }
+  ```
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    metrics: {
+      maxDataPoints: 1440 // Store 24 hours of metrics at 1-minute granularity
+    }
+  });
+  ```
+
+  See [Metrics](/advanced/metrics) for usage details.
+</ParamField>
+
+## Advanced Settings
+
+```typescript
+interface AdvancedSettings {
+  lockDuration?: number; // default: 30000
+  lockRenewTime?: number; // default: lockDuration / 2
+  stalledInterval?: number; // default: 30000
+  maxStalledCount?: number; // default: 1
+  guardInterval?: number; // default: 5000
+  retryProcessDelay?: number; // default: 5000
+  backoffStrategies?: {}; // custom backoff strategies
+  drainDelay?: number; // default: 5
+  isSharedChildPool?: boolean; // default: false
+}
+```
+
+<Warning>
+  Do not override these advanced settings unless you understand the internals of the queue.
+</Warning>
+
+### lockDuration
+
+<ParamField path="settings.lockDuration" type="number" default="30000">
+  Time in milliseconds to acquire the job lock. This prevents multiple workers from processing the same job.
+
+  - Increase if jobs are CPU-intensive and may stall the event loop
+  - Decrease if jobs are time-sensitive and double-processing is acceptable
+
+  ```javascript
+  const queue = new Queue('cpu-intensive', {
+    settings: {
+      lockDuration: 60000 // 60 seconds for long-running jobs
+    }
+  });
+  ```
+
+  See [Stalled Jobs](/advanced/stalled-jobs) for more information.
+</ParamField>
+
+### lockRenewTime
+
+<ParamField path="settings.lockRenewTime" type="number" default="lockDuration / 2">
+  Interval in milliseconds on which to renew the job lock. Should never be larger than `lockDuration`.
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    settings: {
+      lockDuration: 30000,
+      lockRenewTime: 15000 // Renew lock every 15 seconds
+    }
+  });
+  ```
+</ParamField>
+
+### stalledInterval
+
+<ParamField path="settings.stalledInterval" type="number" default="30000">
+  Interval in milliseconds on which each worker checks for stalled jobs. Set to `0` to never check.
+
+  - Decrease for time-sensitive jobs
+  - Increase if Redis CPU usage is high (this check can be expensive)
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    settings: {
+      stalledInterval: 5000 // Check every 5 seconds
+    }
+  });
+  ```
+
+  <Note>
+  Each worker runs this check independently, so stalled jobs are checked more frequently than this interval suggests.
+  </Note>
+</ParamField>
+
+### maxStalledCount
+
+<ParamField path="settings.maxStalledCount" type="number" default="1">
+  Maximum number of times a job can be restarted from stalled state before permanent failure.
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    settings: {
+      maxStalledCount: 2 // Allow up to 2 restarts from stalled state
+    }
+  });
+  ```
+</ParamField>
+
+### guardInterval
+
+<ParamField path="settings.guardInterval" type="number" default="5000">
+  Interval in milliseconds for the delayed job watchdog.
+
+  When running multiple workers with delayed jobs, increase this value to reduce network/CPU/memory spikes:
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    settings: {
+      guardInterval: numberOfWorkers * 5000
+    }
+  });
+  ```
+</ParamField>
+
+### retryProcessDelay
+
+<ParamField path="settings.retryProcessDelay" type="number" default="5000">
+  Time in milliseconds to wait before retrying job processing after a Redis error.
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    settings: {
+      retryProcessDelay: 2000 // Retry faster on unstable connections
+    }
+  });
+  ```
+</ParamField>
+
+### backoffStrategies
+
+<ParamField path="settings.backoffStrategies" type="object" default="{}">
+  Custom backoff strategies keyed by name.
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    settings: {
+      backoffStrategies: {
+        jitter: function(attemptsMade, err) {
+          return 5000 + Math.random() * 500;
+        },
+        custom: function(attemptsMade, err) {
+          return attemptsMade * 1000;
+        }
+      }
+    }
+  });
+
+  // Use in job options
+  queue.add(data, {
+    attempts: 3,
+    backoff: {
+      type: 'jitter'
+    }
+  });
+  ```
+</ParamField>
+
+### drainDelay
+
+<ParamField path="settings.drainDelay" type="number" default="5">
+  Timeout in seconds when the queue is drained (empty and waiting for jobs). Used for the Redis `brpoplpush` blocking call.
+
+  ```javascript
+  const queue = new Queue('myqueue', {
+    settings: {
+      drainDelay: 10
+    }
+  });
+  ```
+</ParamField>
+
+### isSharedChildPool
+
+<ParamField path="settings.isSharedChildPool" type="boolean" default="false">
+  Enable multiple queues to share the same child process pool for sandboxed processors.
+
+  ```javascript
+  const queue1 = new Queue('queue1', {
+    settings: { isSharedChildPool: true }
+  });
+  const queue2 = new Queue('queue2', {
+    settings: { isSharedChildPool: true }
+  });
+  ```
+</ParamField>
+
+## Examples
+
+### Basic Configuration
+
+```javascript
+const Queue = require('bull');
+
+const myQueue = new Queue('notifications', {
+  redis: {
+    host: '127.0.0.1',
+    port: 6379
+  },
+  prefix: 'myapp',
+  defaultJobOptions: {
+    attempts: 3,
+    removeOnComplete: true
+  }
+});
+```
+
+### Production Configuration
+
+```javascript
+const Queue = require('bull');
+
+const productionQueue = new Queue('orders', 'redis://redis.example.com:6379', {
+  prefix: 'prod',
+  limiter: {
+    max: 1000,
+    duration: 60000
+  },
+  defaultJobOptions: {
+    attempts: 5,
+    backoff: {
+      type: 'exponential',
+      delay: 2000
+    },
+    removeOnComplete: 100, // Keep last 100 completed jobs
+    removeOnFail: false
+  },
+  settings: {
+    lockDuration: 45000,
+    stalledInterval: 30000,
+    maxStalledCount: 2
+  },
+  metrics: {
+    maxDataPoints: 2880 // 48 hours at 1-minute granularity
+  }
+});
+```
+
+### Shared Connections
+
+```javascript
+const Redis = require('ioredis');
+const Queue = require('bull');
+
+const client = new Redis();
+const subscriber = new Redis();
+
+function createQueue(name) {
+  return new Queue(name, {
+    createClient: (type) => {
+      switch(type) {
+        case 'client':
+          return client;
+        case 'subscriber':
+          return subscriber;
+        case 'bclient':
+          return new Redis({ maxRetriesPerRequest: null });
+      }
+    }
+  });
+}
+
+const queue1 = createQueue('queue1');
+const queue2 = createQueue('queue2');
+
+// Don't forget to disconnect shared connections
+process.on('SIGTERM', async () => {
+  await queue1.close();
+  await queue2.close();
+  await client.quit();
+  await subscriber.quit();
+});
+```
+
+## Related
+
+- [Job Options](/advanced/job-options)
+- [Stalled Jobs](/advanced/stalled-jobs)
+- [Metrics](/advanced/metrics)

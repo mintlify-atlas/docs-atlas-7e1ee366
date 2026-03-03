@@ -1,0 +1,165 @@
+---
+title: Migration Guide
+description: Upgrade guides for migrating between Bull versions and to BullMQ
+---
+
+## Migration from Bull v2.x to v3.0.0
+
+Although version 3.0 is almost backwards compatible with 2.x, there are some important changes that need to be taken into consideration before upgrading to 3.0.
+
+### Complete and Failed Sets
+
+In 3.x, jobs that are completed and failed end in two ZSETs instead of a standard SET. This gives the possibility of retrieving a subset of jobs in a high-performance way, which is useful for graphical tools and scripts.
+
+**Important:** An old queue will not be compatible with 3.x. You will need to either:
+- Delete the complete and failed keys
+- Create a new queue
+
+### Data Structure Changes
+
+#### Job ID Property
+The job ID property has been renamed:
+```javascript
+// v2.x
+job.jobId
+
+// v3.x
+job.id
+```
+
+#### JSON Serialization
+When using `toJSON()`, the structure now includes:
+- `job.data`
+- `job.opts`
+
+### Queue Instantiation Options
+
+All queue options have been sanitized and cleaned. Check the [Queue API Reference](/api/queue/constructor) documentation to see the new structure.
+
+### Events
+
+All events are now published atomically in the scripts where they are relevant. This increases efficiency and reduces chances for hazards.
+
+#### Ready Event Removed
+
+The `ready` event has been removed. You can use `Queue.isReady()` instead if you want to know when the queue has been initialized.
+
+**Note:** You will normally never need to wait for readiness since this is taken care of internally by the queue methods that require the queue to be ready.
+
+#### Event Arguments Changes
+
+Event arguments are now the same for local and global events. This affects events such as `completed` and `failed`.
+
+**v2.x behavior:**
+- Local events: First argument was a job instance
+- Global events: First argument was a job ID
+
+**v3.x behavior:**
+- Both local and global events: First argument is `jobId`
+- If the job instance is needed, it can be retrieved with `Job.fromId()`
+
+```javascript
+// v3.x event handling
+queue.on('completed', async (jobId, result) => {
+  const job = await Job.fromId(queue, jobId);
+  console.log(`Job ${job.id} completed with result:`, result);
+});
+```
+
+---
+
+## Migrating to BullMQ
+
+Bull is currently in maintenance mode, with only bug fixes being released. For new features and improved performance, consider migrating to [BullMQ](https://github.com/taskforcesh/bullmq).
+
+### Why Migrate to BullMQ?
+
+BullMQ is a modern rewrite of Bull in TypeScript with:
+- Better performance and reliability
+- Native TypeScript support
+- Modern async/await API
+- New features like parent-child job dependencies
+- Observables support (BullMQ-Pro)
+- Group rate limiting (BullMQ-Pro)
+
+### Key Differences
+
+#### TypeScript-First
+BullMQ is written in TypeScript and provides first-class TypeScript support out of the box.
+
+#### API Changes
+While BullMQ maintains similar concepts, some API methods have changed:
+
+```javascript
+// Bull
+const Queue = require('bull');
+const queue = new Queue('my-queue');
+
+// BullMQ
+const { Queue } = require('bullmq');
+const queue = new Queue('my-queue');
+```
+
+#### Worker Separation
+In BullMQ, workers are a separate class:
+
+```javascript
+// Bull
+queue.process(async (job) => {
+  // process job
+});
+
+// BullMQ
+const { Worker } = require('bullmq');
+const worker = new Worker('my-queue', async (job) => {
+  // process job
+});
+```
+
+### Migration Strategy
+
+1. **Run Both in Parallel**: You can run Bull and BullMQ side-by-side with different queue names
+2. **Gradual Migration**: Migrate one queue at a time
+3. **Test Thoroughly**: Ensure all job processors work correctly with the new API
+4. **Update Monitoring**: Update any monitoring or UI tools to support BullMQ
+
+### Resources
+
+- [BullMQ Documentation](https://docs.bullmq.io/)
+- [BullMQ GitHub Repository](https://github.com/taskforcesh/bullmq)
+- [BullMQ Migration Guide](https://docs.bullmq.io/bull/migration)
+
+---
+
+## Version 4.x Breaking Changes
+
+### Redis Connection Options Required
+
+Starting with Bull v4.0.0, if Redis options are missing the following properties, an exception will be thrown:
+
+```javascript
+{
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false
+}
+```
+
+Make sure your Redis configuration includes these settings:
+
+```javascript
+const queue = new Queue('my-queue', {
+  redis: {
+    port: 6379,
+    host: '127.0.0.1',
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false
+  }
+});
+```
+
+### Other Notable Changes
+
+- **IORedis 5.x**: Bull 4.11+ uses IORedis 5.x
+- **TypeScript Types**: Types are now included in the package
+- **Metrics Support**: Built-in metrics collection added in 4.7.0
+- **Job Debouncing**: Added in 4.16.0

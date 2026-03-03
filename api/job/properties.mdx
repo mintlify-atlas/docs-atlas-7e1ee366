@@ -1,0 +1,132 @@
+---
+title: 'Job Properties'
+description: 'Access job data, metadata, and configuration options'
+---
+
+A job includes all data needed to perform its execution, as well as metadata about its current state and execution history.
+
+## job.data
+
+The data object that was passed to `Queue#add()` when creating the job. This is the primary payload used to perform the job.
+
+```javascript
+const job = await queue.add({ email: 'user@example.com', userId: 123 });
+
+console.log(job.data);
+// { email: 'user@example.com', userId: 123 }
+```
+
+## job.id
+
+The unique identifier for the job. By default, this is an auto-incrementing integer, but can be customized using the `jobId` option when adding a job.
+
+```javascript
+const job = await queue.add('email', data, { jobId: 'unique-email-123' });
+
+console.log(job.id); // 'unique-email-123'
+```
+
+## job.opts
+
+The job options that were specified when the job was created.
+
+<ResponseField name="job.opts" type="JobOpts">
+  Configuration options for the job
+  
+  <Expandable title="properties">
+    <ResponseField name="priority" type="number">
+      Priority value. Ranges from 1 (highest priority) to MAX_INT (lowest priority)
+    </ResponseField>
+    
+    <ResponseField name="delay" type="number">
+      Milliseconds to wait until this job can be processed
+    </ResponseField>
+    
+    <ResponseField name="attempts" type="number">
+      Total number of attempts to try the job until it completes
+    </ResponseField>
+    
+    <ResponseField name="backoff" type="number | BackoffOpts">
+      Backoff setting for automatic retries if the job fails
+    </ResponseField>
+    
+    <ResponseField name="lifo" type="boolean">
+      If true, adds the job to the right of the queue instead of the left
+    </ResponseField>
+    
+    <ResponseField name="timeout" type="number">
+      Number of milliseconds after which the job should fail with a timeout error
+    </ResponseField>
+    
+    <ResponseField name="jobId" type="number | string">
+      Override the job ID
+    </ResponseField>
+    
+    <ResponseField name="removeOnComplete" type="boolean | number | KeepJobs">
+      If true, removes the job when it successfully completes
+    </ResponseField>
+    
+    <ResponseField name="removeOnFail" type="boolean | number | KeepJobs">
+      If true, removes the job when it fails after all attempts
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```javascript
+const job = await queue.add('email', data, {
+  attempts: 3,
+  backoff: { type: 'exponential', delay: 1000 },
+  removeOnComplete: true
+});
+
+console.log(job.opts.attempts); // 3
+console.log(job.opts.backoff); // { type: 'exponential', delay: 1000 }
+```
+
+## job.attemptsMade
+
+The number of failed attempts that have been made for this job.
+
+<ResponseField name="job.attemptsMade" type="number">
+  Number of failed attempts
+</ResponseField>
+
+```javascript
+queue.process(async (job) => {
+  console.log(`Attempt ${job.attemptsMade + 1} of ${job.opts.attempts}`);
+  
+  if (job.attemptsMade > 0) {
+    console.log('This is a retry');
+  }
+  
+  // Process the job
+});
+```
+
+## job.finishedOn
+
+Unix timestamp (in milliseconds) when the job was completed or finally failed after all attempts.
+
+<ResponseField name="job.finishedOn" type="number">
+  Unix timestamp in milliseconds
+</ResponseField>
+
+```javascript
+const job = await queue.getJob(jobId);
+
+if (job.finishedOn) {
+  const finishedDate = new Date(job.finishedOn);
+  console.log(`Job finished at: ${finishedDate.toISOString()}`);
+}
+```
+
+## Additional Properties
+
+Jobs also contain other useful properties for tracking state:
+
+- `job.timestamp`: When the job was created
+- `job.processedOn`: When the job was last processed
+- `job.failedReason`: Error message if the job failed
+- `job.stacktrace`: Array of stack traces from failed attempts
+- `job.returnvalue`: The return value from a completed job
+- `job.name`: The job type name (if provided to `Queue#add()`)

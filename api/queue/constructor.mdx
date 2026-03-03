@@ -1,0 +1,241 @@
+---
+title: "Queue Constructor"
+description: "Create a new Bull queue instance with Redis persistence"
+---
+
+## Overview
+
+The Queue constructor creates a new queue that is persisted in Redis. Every time the same queue is instantiated, it attempts to process all old jobs that may exist from a previous unfinished session.
+
+## Signature
+
+```ts
+Queue(queueName: string, url?: string, opts?: QueueOptions): Queue
+```
+
+## Parameters
+
+<ParamField path="queueName" type="string" required>
+  The name of the queue. Multiple queue instances with the same name will share the same job data.
+</ParamField>
+
+<ParamField path="url" type="string">
+  Redis connection string. For example: `redis://mypassword@myredis.server.com:1234`
+</ParamField>
+
+<ParamField path="opts" type="QueueOptions">
+  Configuration options for the queue.
+
+  <ParamField path="createClient" type="function">
+    Custom function to create Redis client instances. Receives `type` ('client', 'subscriber', or 'bclient') and optional Redis config.
+    
+    ```ts
+    (type: 'client' | 'subscriber' | 'bclient', config?: Redis.RedisOptions) => Redis.Redis | Redis.Cluster
+    ```
+    
+    Note: The 'bclient' (blocking client) connection cannot be shared and a new connection should be returned each time.
+  </ParamField>
+
+  <ParamField path="limiter" type="RateLimiter">
+    Rate limiting configuration.
+    
+    <ParamField path="max" type="number" required>
+      Maximum number of jobs processed per duration.
+    </ParamField>
+    
+    <ParamField path="duration" type="number" required>
+      Duration in milliseconds for the rate limit window.
+    </ParamField>
+    
+    <ParamField path="bounceBack" type="boolean" default="false">
+      When jobs get rate limited, they stay in the waiting queue instead of moving to delayed queue.
+    </ParamField>
+    
+    <ParamField path="groupKey" type="string">
+      Allows grouping of jobs with the specified key from the data object (e.g., "network.handle").
+    </ParamField>
+  </ParamField>
+
+  <ParamField path="redis" type="RedisOpts">
+    Redis connection options (passed directly to ioredis).
+    
+    <ParamField path="port" type="number" default="6379">
+      Redis server port.
+    </ParamField>
+    
+    <ParamField path="host" type="string" default="localhost">
+      Redis server hostname.
+    </ParamField>
+    
+    <ParamField path="db" type="number" default="0">
+      Redis database index.
+    </ParamField>
+    
+    <ParamField path="password" type="string">
+      Redis authentication password.
+    </ParamField>
+  </ParamField>
+
+  <ParamField path="prefix" type="string" default="bull">
+    Prefix for all queue keys in Redis.
+  </ParamField>
+
+  <ParamField path="metrics" type="MetricsOpts">
+    Configure metrics collection.
+    
+    <ParamField path="maxDataPoints" type="number">
+      Maximum number of data points to collect. Granularity is fixed at one minute.
+    </ParamField>
+  </ParamField>
+
+  <ParamField path="defaultJobOptions" type="JobOpts">
+    Default options to apply to all jobs added to the queue.
+  </ParamField>
+
+  <ParamField path="settings" type="AdvancedSettings">
+    Advanced queue behavior settings.
+    
+    <Warning>Do not override these settings unless you understand the internals of the queue.</Warning>
+    
+    <ParamField path="lockDuration" type="number" default="30000">
+      Key expiration time for job locks in milliseconds.
+    </ParamField>
+    
+    <ParamField path="lockRenewTime" type="number" default="15000">
+      Interval in milliseconds on which to renew the job lock.
+    </ParamField>
+    
+    <ParamField path="stalledInterval" type="number" default="30000">
+      How often to check for stalled jobs in milliseconds. Use 0 to never check.
+    </ParamField>
+    
+    <ParamField path="maxStalledCount" type="number" default="1">
+      Maximum number of times a stalled job will be re-processed.
+    </ParamField>
+    
+    <ParamField path="guardInterval" type="number" default="5000">
+      Poll interval for delayed jobs and added jobs in milliseconds.
+    </ParamField>
+    
+    <ParamField path="retryProcessDelay" type="number" default="5000">
+      Delay before processing next job in case of internal error.
+    </ParamField>
+    
+    <ParamField path="backoffStrategies" type="object" default="{}">
+      A set of custom backoff strategies keyed by name.
+    </ParamField>
+    
+    <ParamField path="drainDelay" type="number" default="5">
+      Timeout for when the queue is in drained state (empty waiting for jobs).
+    </ParamField>
+    
+    <ParamField path="isSharedChildPool" type="boolean" default="false">
+      Enables multiple queues on the same instance of child pool to share the same instance.
+    </ParamField>
+  </ParamField>
+</ParamField>
+
+## Examples
+
+### Basic Queue
+
+```js
+const Queue = require('bull');
+const myQueue = new Queue('my-queue');
+```
+
+### Queue with Redis URL
+
+```js
+const queue = new Queue('notifications', 'redis://password@127.0.0.1:6379');
+```
+
+### Queue with Redis Options
+
+```js
+const queue = new Queue('emails', {
+  redis: {
+    port: 6379,
+    host: '127.0.0.1',
+    password: 'mypassword',
+    db: 2
+  }
+});
+```
+
+### Queue with Rate Limiting
+
+```js
+const queue = new Queue('api-requests', {
+  limiter: {
+    max: 100,
+    duration: 60000, // 100 requests per minute
+    bounceBack: false
+  }
+});
+```
+
+### Queue with Custom Backoff Strategy
+
+```js
+const queue = new Queue('processing', {
+  settings: {
+    backoffStrategies: {
+      jitter: function () {
+        return 5000 + Math.random() * 500;
+      }
+    }
+  }
+});
+```
+
+### Queue with Shared Redis Connections
+
+```js
+const Redis = require('ioredis');
+const client = new Redis();
+const subscriber = new Redis();
+
+const createClient = (type, config) => {
+  switch (type) {
+    case 'client':
+      return client;
+    case 'subscriber':
+      return subscriber;
+    case 'bclient':
+      return new Redis(config); // bclient cannot be shared
+    default:
+      return new Redis(config);
+  }
+};
+
+const queue = new Queue('shared', { createClient });
+```
+
+### Queue with Metrics
+
+```js
+const queue = new Queue('analytics', {
+  metrics: {
+    maxDataPoints: 1000
+  }
+});
+```
+
+## Advanced Settings Notes
+
+### Lock Duration
+
+Set this to a higher value if your jobs are CPU-intensive and blocking the event loop. Set to a lower value if jobs are extremely time-sensitive and it might be acceptable if they get double-processed.
+
+### Stalled Interval
+
+Set this to a lower value if your jobs are extremely time-sensitive. Set this to a higher value if your Redis CPU usage is high, as this check can be expensive.
+
+### Guard Interval
+
+When running multiple concurrent workers with delayed tasks, set this value much higher (e.g., `numberOfWorkers * 5000`) to avoid spikes in network bandwidth, CPU usage, and memory usage.
+
+### Max Stalled Count
+
+Set this higher if stalled jobs are common (e.g., processes crash frequently) and it's generally acceptable to double-process jobs.

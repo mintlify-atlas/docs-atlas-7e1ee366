@@ -1,0 +1,352 @@
+---
+title: Job Priorities
+description: Process important jobs first using Bull's priority system
+---
+
+Priorities allow you to control the order in which jobs are processed. Higher priority jobs are processed before lower priority ones, making this feature essential for time-sensitive tasks or critical operations.
+
+## Basic Usage
+
+Add jobs with the `priority` option to set their priority:
+
+```javascript
+const Queue = require('bull');
+const taskQueue = new Queue('tasks');
+
+// High priority job (processed first)
+await taskQueue.add(
+  { task: 'critical-update' },
+  { priority: 1 }  // 1 = highest priority
+);
+
+// Normal priority job
+await taskQueue.add(
+  { task: 'regular-update' },
+  { priority: 5 }
+);
+
+// Low priority job (processed last)
+await taskQueue.add(
+  { task: 'background-cleanup' },
+  { priority: 10 }  // Higher numbers = lower priority
+);
+```
+
+## Priority Range
+
+```typescript
+interface JobOpts {
+  priority: number; // Priority value ranges from 1 (highest) to MAX_INT (lowest)
+}
+```
+
+<Info>
+- **Priority 1**: Highest priority (processed first)
+- **Priority 10**: Low priority
+- **Priority 100+**: Very low priority
+- **No priority**: Jobs without priority are treated equally and processed in FIFO order
+</Info>
+
+## How Priorities Work
+
+Jobs are processed in priority order, with lower numbers processed before higher numbers:
+
+```javascript
+const queue = new Queue('priority-demo');
+
+// Add jobs in random order
+await queue.add({ job: 'A' }, { priority: 5 });
+await queue.add({ job: 'B' }, { priority: 1 });
+await queue.add({ job: 'C' }, { priority: 10 });
+await queue.add({ job: 'D' }, { priority: 1 });
+await queue.add({ job: 'E' }, { priority: 3 });
+
+// Processing order:
+// 1. Job B (priority 1)
+// 2. Job D (priority 1)
+// 3. Job E (priority 3)
+// 4. Job A (priority 5)
+// 5. Job C (priority 10)
+```
+
+## Common Use Cases
+
+<Tabs>
+  <Tab title="User-Facing Tasks">
+    Prioritize jobs that directly impact user experience:
+    
+    ```javascript
+    const requestQueue = new Queue('user-requests');
+    
+    // User-initiated action - highest priority
+    await requestQueue.add(
+      { type: 'user-action', userId: '123' },
+      { priority: 1 }
+    );
+    
+    // Background sync - lower priority
+    await requestQueue.add(
+      { type: 'sync', userId: '123' },
+      { priority: 5 }
+    );
+    
+    // Analytics - lowest priority
+    await requestQueue.add(
+      { type: 'analytics', userId: '123' },
+      { priority: 10 }
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Paid vs Free Tier">
+    Give premium users faster processing:
+    
+    ```javascript
+    const processingQueue = new Queue('processing');
+    
+    async function addUserJob(user, data) {
+      const priority = user.isPremium ? 1 : 5;
+      
+      await processingQueue.add(
+        { userId: user.id, data },
+        { priority }
+      );
+    }
+    
+    // Premium users get priority 1
+    await addUserJob({ id: 'u1', isPremium: true }, { ... });
+    
+    // Free users get priority 5
+    await addUserJob({ id: 'u2', isPremium: false }, { ... });
+    ```
+  </Tab>
+  
+  <Tab title="Severity Levels">
+    Process critical errors before warnings:
+    
+    ```javascript
+    const alertQueue = new Queue('alerts');
+    
+    // Critical error - immediate attention
+    await alertQueue.add(
+      { level: 'critical', message: 'Database down' },
+      { priority: 1 }
+    );
+    
+    // Warning - can wait
+    await alertQueue.add(
+      { level: 'warning', message: 'High memory usage' },
+      { priority: 5 }
+    );
+    
+    // Info - lowest priority
+    await alertQueue.add(
+      { level: 'info', message: 'Deployment completed' },
+      { priority: 10 }
+    );
+    ```
+  </Tab>
+</Tabs>
+
+## Performance Impact
+
+<Warning>
+**Using priorities has a slight impact on performance**. The priority feature uses Redis sorted sets instead of lists, which adds overhead. Only enable priorities when you need them.
+</Warning>
+
+### Performance Considerations
+
+```javascript
+// Without priorities (faster)
+// Jobs stored in Redis lists - O(1) operations
+await queue.add({ data: 'job1' });
+await queue.add({ data: 'job2' });
+
+// With priorities (slightly slower)
+// Jobs stored in Redis sorted sets - O(log N) operations
+await queue.add({ data: 'job1' }, { priority: 1 });
+await queue.add({ data: 'job2 '}, { priority: 2 });
+```
+
+<Info>
+For most applications, the performance difference is negligible. Only avoid priorities if you're processing hundreds of thousands of jobs per second.
+</Info>
+
+## Dynamic Priorities
+
+Calculate priority based on job characteristics:
+
+```javascript
+function calculatePriority(job) {
+  // Urgent jobs
+  if (job.urgent) return 1;
+  
+  // Time-sensitive jobs
+  if (job.deadline) {
+    const timeUntilDeadline = job.deadline - Date.now();
+    const hoursRemaining = timeUntilDeadline / (1000 * 60 * 60);
+    
+    if (hoursRemaining < 1) return 1;
+    if (hoursRemaining < 24) return 3;
+    return 5;
+  }
+  
+  // Default priority
+  return 10;
+}
+
+const queue = new Queue('smart-priority');
+
+await queue.add(
+  { task: 'process-order', deadline: Date.now() + 3600000 },
+  { priority: calculatePriority({ deadline: Date.now() + 3600000 }) }
+);
+```
+
+## Combining Priorities with Other Features
+
+### Priorities + Concurrency
+
+```javascript
+const queue = new Queue('priority-concurrent');
+
+// Process 5 jobs at a time, respecting priority order
+queue.process(5, async (job) => {
+  console.log(`Processing priority ${job.opts.priority}: ${job.data.name}`);
+  return processJob(job);
+});
+
+// High priority jobs fill available concurrency slots first
+```
+
+### Priorities + Delayed Jobs
+
+```javascript
+// Job delayed but with high priority
+// Once delay expires, it jumps to front of queue
+await queue.add(
+  { task: 'scheduled-critical' },
+  {
+    delay: 60000,   // Wait 1 minute
+    priority: 1     // Then process first
+  }
+);
+
+// Job delayed with low priority
+await queue.add(
+  { task: 'scheduled-background' },
+  {
+    delay: 60000,   // Wait 1 minute
+    priority: 10    // Then process after others
+  }
+);
+```
+
+### Priorities + Attempts
+
+```javascript
+// Retried jobs maintain their priority
+await queue.add(
+  { task: 'critical-api-call' },
+  {
+    priority: 1,    // High priority
+    attempts: 3     // Retry up to 3 times
+  }
+);
+
+// Failed jobs retry with same priority level
+```
+
+## Priority Strategies
+
+<Steps>
+  <Step title="Define priority tiers">
+    Create clear priority levels for your application:
+    
+    ```javascript
+    const PRIORITY = {
+      CRITICAL: 1,
+      HIGH: 3,
+      NORMAL: 5,
+      LOW: 7,
+      BACKGROUND: 10
+    };
+    
+    await queue.add(data, { priority: PRIORITY.CRITICAL });
+    await queue.add(data, { priority: PRIORITY.BACKGROUND });
+    ```
+  </Step>
+  
+  <Step title="Use sparse priorities">
+    Leave gaps between priority values for flexibility:
+    
+    ```javascript
+    // Good - allows adding priorities in between
+    const PRIORITY = {
+      URGENT: 1,
+      HIGH: 5,
+      NORMAL: 10,
+      LOW: 20
+    };
+    
+    // Bad - no room for intermediate priorities
+    const PRIORITY = {
+      URGENT: 1,
+      HIGH: 2,
+      NORMAL: 3,
+      LOW: 4
+    };
+    ```
+  </Step>
+  
+  <Step title="Monitor priority distribution">
+    Track how priorities are used:
+    
+    ```javascript
+    queue.on('completed', (job) => {
+      console.log(`Completed priority ${job.opts.priority}`);
+      metrics.recordPriority(job.opts.priority);
+    });
+    ```
+  </Step>
+</Steps>
+
+## Best Practices
+
+<Tip>
+**Use priorities sparingly**: Not every job needs a priority. Reserve priorities for scenarios where processing order truly matters.
+</Tip>
+
+<Tip>
+**Document your priority scheme**: Maintain a clear definition of what each priority level means in your application.
+</Tip>
+
+<Warning>
+**Avoid priority starvation**: If you constantly add high-priority jobs, low-priority jobs may never execute. Monitor your queue to ensure all jobs eventually process.
+</Warning>
+
+## Testing Priorities
+
+```javascript
+const queue = new Queue('test-priorities');
+const processedJobs = [];
+
+queue.process(async (job) => {
+  processedJobs.push(job.data.id);
+});
+
+// Add jobs with different priorities
+await queue.add({ id: 'low' }, { priority: 10 });
+await queue.add({ id: 'high' }, { priority: 1 });
+await queue.add({ id: 'medium' }, { priority: 5 });
+
+// Wait for processing
+await new Promise(resolve => setTimeout(resolve, 1000));
+
+// Verify order: ['high', 'medium', 'low']
+console.log('Processing order:', processedJobs);
+```
+
+<Note>
+Jobs with the same priority are processed in FIFO (first-in, first-out) order relative to each other.
+</Note>

@@ -1,0 +1,217 @@
+---
+title: 'Progress & Logging'
+description: 'Track job progress and add logs during execution'
+---
+
+Bull provides methods to track progress and log information during job execution.
+
+## progress()
+
+```ts
+progress(progress?: number | object): Promise
+```
+
+Updates a job's progress if called with an argument. Returns a promise resolving to the current job's progress if called without an argument.
+
+<ParamField path="progress" type="number | object" optional>
+  Job progress as a number (0-100) or any serializable object representing progress
+</ParamField>
+
+### Setting Progress
+
+You can report progress as a percentage (number) or as a custom object:
+
+```javascript
+queue.process(async (job) => {
+  // Report progress as percentage
+  await job.progress(10);
+  // Do some work...
+  
+  await job.progress(50);
+  // Do more work...
+  
+  await job.progress(100);
+  
+  return { success: true };
+});
+```
+
+### Custom Progress Objects
+
+For more detailed progress tracking, use an object:
+
+```javascript
+queue.process(async (job) => {
+  const total = job.data.items.length;
+  
+  for (let i = 0; i < total; i++) {
+    // Process item
+    processItem(job.data.items[i]);
+    
+    // Report detailed progress
+    await job.progress({
+      processed: i + 1,
+      total: total,
+      percentage: Math.round(((i + 1) / total) * 100),
+      currentItem: job.data.items[i].name
+    });
+  }
+  
+  return { success: true };
+});
+```
+
+### Reading Progress
+
+Call `progress()` without arguments to read the current progress:
+
+```javascript
+const currentProgress = await job.progress();
+console.log('Current progress:', currentProgress);
+```
+
+### Listening to Progress Events
+
+```javascript
+queue.on('progress', (job, progress) => {
+  console.log(`Job ${job.id} is ${progress}% complete`);
+});
+
+// Global progress events (across all workers)
+queue.on('global:progress', (jobId, progress) => {
+  console.log(`Job ${jobId} is ${progress}% complete`);
+});
+```
+
+## log()
+
+```ts
+log(row: string): Promise
+```
+
+Adds a log entry to this specific job. Logs can be retrieved using `Queue#getJobLogs()`.
+
+<ParamField path="row" type="string" required>
+  The log message to add
+</ParamField>
+
+### Adding Logs
+
+```javascript
+queue.process(async (job) => {
+  await job.log('Starting job processing');
+  
+  try {
+    await job.log('Fetching data from API...');
+    const data = await fetchData(job.data.url);
+    
+    await job.log(`Received ${data.length} items`);
+    
+    await job.log('Processing items...');
+    const result = await processData(data);
+    
+    await job.log('Job completed successfully');
+    return result;
+    
+  } catch (error) {
+    await job.log(`Error: ${error.message}`);
+    throw error;
+  }
+});
+```
+
+### Error Logging
+
+```javascript
+queue.process(async (job) => {
+  for (let i = 0; i < job.data.items.length; i++) {
+    try {
+      await processItem(job.data.items[i]);
+      await job.log(`✓ Processed item ${i + 1}`);
+    } catch (error) {
+      await job.log(`✗ Failed to process item ${i + 1}: ${error.message}`);
+    }
+  }
+});
+```
+
+## Queue#getJobLogs()
+
+```ts
+getJobLogs(jobId: string, start?: number, end?: number): Promise<{
+  logs: string[],
+  count: number
+}>
+```
+
+Retrieves logs for a specific job. Returns an object with the logs and the total count.
+
+<ParamField path="jobId" type="string" required>
+  The ID of the job
+</ParamField>
+
+<ParamField path="start" type="number" optional>
+  Start index for pagination (default: 0)
+</ParamField>
+
+<ParamField path="end" type="number" optional>
+  End index for pagination (default: -1, meaning all logs)
+</ParamField>
+
+<ResponseField name="logs" type="string[]">
+  Array of log messages
+</ResponseField>
+
+<ResponseField name="count" type="number">
+  Total number of logs (useful for pagination)
+</ResponseField>
+
+### Retrieving Logs
+
+```javascript
+// Get all logs for a job
+const { logs, count } = await queue.getJobLogs('job-123');
+console.log(`Job has ${count} log entries:`);
+logs.forEach(log => console.log(log));
+```
+
+### Paginated Logs
+
+```javascript
+// Get first 10 logs
+const page1 = await queue.getJobLogs('job-123', 0, 9);
+console.log(`Showing 10 of ${page1.count} logs:`);
+page1.logs.forEach(log => console.log(log));
+
+// Get next 10 logs
+const page2 = await queue.getJobLogs('job-123', 10, 19);
+```
+
+### Full Example
+
+```javascript
+const queue = new Queue('processing');
+
+queue.process(async (job) => {
+  await job.log('Job started');
+  await job.progress(0);
+  
+  const steps = 5;
+  for (let i = 1; i <= steps; i++) {
+    await job.log(`Step ${i}/${steps}`);
+    await performStep(i);
+    await job.progress((i / steps) * 100);
+  }
+  
+  await job.log('Job completed');
+  return { success: true };
+});
+
+// Later, retrieve logs
+const job = await queue.add({ data: 'test' });
+await job.finished();
+
+const { logs } = await queue.getJobLogs(job.id);
+console.log('Job logs:');
+logs.forEach(log => console.log(`  ${log}`));
+```

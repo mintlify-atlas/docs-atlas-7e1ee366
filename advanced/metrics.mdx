@@ -1,0 +1,416 @@
+---
+title: Metrics
+description: Collect and analyze queue performance metrics
+---
+
+Bull can collect metrics about completed and failed jobs to help you monitor queue performance and identify issues.
+
+## Enabling Metrics
+
+Enable metrics collection when creating a queue:
+
+```javascript
+const Queue = require('bull');
+
+const queue = new Queue('myqueue', {
+  metrics: {
+    maxDataPoints: 1440 // Store 24 hours of data (1 data point per minute)
+  }
+});
+```
+
+## MetricsOpts Interface
+
+```typescript
+interface MetricsOpts {
+  maxDataPoints?: number; // Max number of data points to collect
+}
+```
+
+<ParamField path="maxDataPoints" type="number">
+  Maximum number of data points to store. Each data point represents one minute of metrics.
+
+  **Common values:**
+  - `60` - 1 hour of metrics
+  - `1440` - 24 hours of metrics
+  - `10080` - 7 days of metrics
+  - `43200` - 30 days of metrics
+
+  ```javascript
+  const queue = new Queue('analytics', {
+    metrics: {
+      maxDataPoints: 10080 // 7 days at 1-minute granularity
+    }
+  });
+  ```
+
+  <Note>
+  Metrics are stored in Redis. Higher values consume more memory.
+  </Note>
+</ParamField>
+
+## Retrieving Metrics
+
+Use the `getMetrics()` method to retrieve collected metrics:
+
+```typescript
+queue.getMetrics(
+  type: 'completed' | 'failed',
+  start?: number,
+  end?: number
+): Promise<MetricsData>
+```
+
+### Return Type
+
+```typescript
+interface MetricsData {
+  meta: {
+    count: number; // Total count in the range
+    prevTS: number; // Previous timestamp
+    prevCount: number; // Previous count
+  };
+  data: number[]; // Array of counts per minute
+  count: number; // Total count
+}
+```
+
+## Examples
+
+### Get Completed Job Metrics
+
+```javascript
+// Get all completed job metrics
+const completedMetrics = await queue.getMetrics('completed');
+
+console.log('Total completed:', completedMetrics.count);
+console.log('Data points:', completedMetrics.data);
+console.log('Metadata:', completedMetrics.meta);
+```
+
+### Get Failed Job Metrics
+
+```javascript
+// Get all failed job metrics
+const failedMetrics = await queue.getMetrics('failed');
+
+console.log('Total failed:', failedMetrics.count);
+console.log('Failure rate:', (
+  failedMetrics.count / 
+  (failedMetrics.count + completedMetrics.count) * 100
+).toFixed(2) + '%');
+```
+
+### Get Metrics Range
+
+```javascript
+// Get metrics for specific time range
+const start = 0; // Start index
+const end = 59; // End index (first hour)
+
+const hourMetrics = await queue.getMetrics('completed', start, end);
+
+console.log('Jobs in last hour:', hourMetrics.data.reduce((a, b) => a + b, 0));
+```
+
+### Calculate Throughput
+
+```javascript
+async function getJobThroughput(queue) {
+  const completed = await queue.getMetrics('completed', 0, 59); // Last hour
+  const failed = await queue.getMetrics('failed', 0, 59);
+  
+  const totalJobs = completed.data.reduce((a, b) => a + b, 0) +
+                    failed.data.reduce((a, b) => a + b, 0);
+  
+  return {
+    totalJobs,
+    jobsPerMinute: (totalJobs / 60).toFixed(2),
+    jobsPerSecond: (totalJobs / 3600).toFixed(2)
+  };
+}
+
+const throughput = await getJobThroughput(queue);
+console.log('Throughput:', throughput);
+// { totalJobs: 1200, jobsPerMinute: '20.00', jobsPerSecond: '0.33' }
+```
+
+### Monitor Error Rate
+
+```javascript
+async function getErrorRate(queue, minutes = 60) {
+  const completed = await queue.getMetrics('completed', 0, minutes - 1);
+  const failed = await queue.getMetrics('failed', 0, minutes - 1);
+  
+  const completedCount = completed.data.reduce((a, b) => a + b, 0);
+  const failedCount = failed.data.reduce((a, b) => a + b, 0);
+  const total = completedCount + failedCount;
+  
+  return {
+    total,
+    completed: completedCount,
+    failed: failedCount,
+    errorRate: total > 0 ? (failedCount / total * 100).toFixed(2) : 0,
+    successRate: total > 0 ? (completedCount / total * 100).toFixed(2) : 0
+  };
+}
+
+const stats = await getErrorRate(queue);
+console.log(`Error rate: ${stats.errorRate}%`);
+console.log(`Success rate: ${stats.successRate}%`);
+```
+
+### Visualize Metrics Over Time
+
+```javascript
+async function getMetricsTimeSeries(queue, hours = 24) {
+  const dataPoints = hours * 60; // Minutes
+  const completed = await queue.getMetrics('completed', 0, dataPoints - 1);
+  const failed = await queue.getMetrics('failed', 0, dataPoints - 1);
+  
+  const timeSeries = [];
+  const now = Date.now();
+  
+  for (let i = 0; i < dataPoints; i++) {
+    timeSeries.push({
+      timestamp: new Date(now - (dataPoints - i) * 60000),
+      completed: completed.data[i] || 0,
+      failed: failed.data[i] || 0,
+      total: (completed.data[i] || 0) + (failed.data[i] || 0)
+    });
+  }
+  
+  return timeSeries;
+}
+
+const series = await getMetricsTimeSeries(queue, 1); // Last hour
+series.forEach(point => {
+  console.log(
+    `${point.timestamp.toISOString()}: ` +
+    `${point.completed} completed, ${point.failed} failed`
+  );
+});
+```
+
+## Monitoring Dashboard Example
+
+```javascript
+const Queue = require('bull');
+const express = require('express');
+
+const queue = new Queue('orders', {
+  metrics: {
+    maxDataPoints: 1440 // 24 hours
+  }
+});
+
+const app = express();
+
+app.get('/metrics', async (req, res) => {
+  const hours = parseInt(req.query.hours) || 1;
+  const dataPoints = hours * 60;
+  
+  const [completed, failed] = await Promise.all([
+    queue.getMetrics('completed', 0, dataPoints - 1),
+    queue.getMetrics('failed', 0, dataPoints - 1)
+  ]);
+  
+  const completedTotal = completed.data.reduce((a, b) => a + b, 0);
+  const failedTotal = failed.data.reduce((a, b) => a + b, 0);
+  const total = completedTotal + failedTotal;
+  
+  res.json({
+    period: `${hours} hour(s)`,
+    summary: {
+      total,
+      completed: completedTotal,
+      failed: failedTotal,
+      errorRate: total > 0 ? (failedTotal / total * 100).toFixed(2) + '%' : '0%',
+      throughput: {
+        perMinute: (total / (hours * 60)).toFixed(2),
+        perHour: (total / hours).toFixed(2)
+      }
+    },
+    timeSeries: completed.data.map((count, i) => ({
+      minute: i,
+      completed: count,
+      failed: failed.data[i] || 0
+    }))
+  });
+});
+
+app.listen(3000, () => {
+  console.log('Metrics dashboard running on http://localhost:3000/metrics');
+});
+```
+
+## Alerting Based on Metrics
+
+```javascript
+const Queue = require('bull');
+
+const queue = new Queue('critical', {
+  metrics: {
+    maxDataPoints: 1440
+  }
+});
+
+// Check metrics every 5 minutes
+setInterval(async () => {
+  const [completed, failed] = await Promise.all([
+    queue.getMetrics('completed', 0, 4), // Last 5 minutes
+    queue.getMetrics('failed', 0, 4)
+  ]);
+  
+  const completedCount = completed.data.reduce((a, b) => a + b, 0);
+  const failedCount = failed.data.reduce((a, b) => a + b, 0);
+  const total = completedCount + failedCount;
+  
+  // Alert if error rate > 10%
+  if (total > 0 && (failedCount / total) > 0.1) {
+    console.error('HIGH ERROR RATE ALERT!');
+    console.error(`Failed: ${failedCount}/${total} (${(failedCount/total*100).toFixed(2)}%)`);
+    // Send alert to monitoring service
+    // alertingService.send({ ... });
+  }
+  
+  // Alert if throughput drops below threshold
+  const throughputPerMinute = total / 5;
+  if (throughputPerMinute < 10) {
+    console.warn('LOW THROUGHPUT WARNING!');
+    console.warn(`Only ${throughputPerMinute.toFixed(2)} jobs/min (expected > 10)`);
+  }
+}, 5 * 60 * 1000);
+```
+
+## Prometheus Integration
+
+```javascript
+const Queue = require('bull');
+const promClient = require('prom-client');
+const express = require('express');
+
+const queue = new Queue('myqueue', {
+  metrics: { maxDataPoints: 60 }
+});
+
+// Define Prometheus metrics
+const completedCounter = new promClient.Counter({
+  name: 'queue_jobs_completed_total',
+  help: 'Total number of completed jobs'
+});
+
+const failedCounter = new promClient.Counter({
+  name: 'queue_jobs_failed_total',
+  help: 'Total number of failed jobs'
+});
+
+const throughputGauge = new promClient.Gauge({
+  name: 'queue_jobs_throughput',
+  help: 'Jobs processed per minute'
+});
+
+// Update Prometheus metrics every minute
+setInterval(async () => {
+  const [completed, failed] = await Promise.all([
+    queue.getMetrics('completed', 0, 0), // Last minute
+    queue.getMetrics('failed', 0, 0)
+  ]);
+  
+  const completedCount = completed.data[0] || 0;
+  const failedCount = failed.data[0] || 0;
+  
+  completedCounter.inc(completedCount);
+  failedCounter.inc(failedCount);
+  throughputGauge.set(completedCount + failedCount);
+}, 60000);
+
+// Expose metrics endpoint
+const app = express();
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', promClient.register.contentType);
+  res.end(await promClient.register.metrics());
+});
+
+app.listen(9090);
+```
+
+## Best Practices
+
+### 1. Choose Appropriate Retention
+
+```javascript
+// Development - short retention
+const devQueue = new Queue('dev', {
+  metrics: { maxDataPoints: 60 } // 1 hour
+});
+
+// Production - longer retention
+const prodQueue = new Queue('prod', {
+  metrics: { maxDataPoints: 10080 } // 7 days
+});
+```
+
+### 2. Monitor Both Completed and Failed
+
+Always track both metrics to get the full picture:
+
+```javascript
+async function getQueueHealth(queue) {
+  const [completed, failed] = await Promise.all([
+    queue.getMetrics('completed'),
+    queue.getMetrics('failed')
+  ]);
+  
+  return {
+    completed: completed.count,
+    failed: failed.count,
+    total: completed.count + failed.count,
+    health: completed.count > 0 
+      ? ((completed.count / (completed.count + failed.count)) * 100).toFixed(2) + '%'
+      : 'N/A'
+  };
+}
+```
+
+### 3. Set Up Automated Monitoring
+
+```javascript
+// Regular health checks
+setInterval(async () => {
+  const health = await getQueueHealth(queue);
+  console.log('Queue health:', health);
+  
+  // Send to monitoring service
+  monitoring.recordMetric('queue.health', health);
+}, 60000);
+```
+
+### 4. Consider Memory Usage
+
+Metrics are stored in Redis. Monitor memory usage:
+
+```javascript
+// Conservative for high-volume queues
+const highVolumeQueue = new Queue('high-volume', {
+  metrics: { maxDataPoints: 1440 } // 24 hours max
+});
+
+// More retention for low-volume queues
+const lowVolumeQueue = new Queue('low-volume', {
+  metrics: { maxDataPoints: 43200 } // 30 days
+});
+```
+
+## Limitations
+
+- **Granularity:** Fixed at 1 data point per minute
+- **Types:** Only tracks completed and failed jobs
+- **Storage:** Metrics are stored in Redis (consider memory impact)
+- **Retention:** Limited by `maxDataPoints` setting
+
+## Related
+
+- [Queue Options](/advanced/queue-options)
+- [Debugging](/advanced/debugging)
+- [Events API Reference](/api/queue/events)

@@ -1,0 +1,509 @@
+---
+title: Job Options
+description: Configure individual job behavior with JobOpts
+---
+
+Every job added to a Bull queue can be configured with specific options that control its behavior.
+
+## Usage
+
+```typescript
+queue.add(data: object, opts?: JobOpts): Promise<Job>
+queue.add(name: string, data: object, opts?: JobOpts): Promise<Job>
+```
+
+## Interface
+
+```typescript
+interface JobOpts {
+  priority?: number;
+  delay?: number;
+  attempts?: number;
+  repeat?: RepeatOpts;
+  backoff?: number | BackoffOpts;
+  lifo?: boolean;
+  timeout?: number;
+  jobId?: number | string;
+  removeOnComplete?: boolean | number | KeepJobs;
+  removeOnFail?: boolean | number | KeepJobs;
+  stackTraceLimit?: number;
+}
+```
+
+## Options
+
+### priority
+
+<ParamField path="priority" type="number">
+  Optional priority value. Ranges from 1 (highest priority) to MAX_INT (lowest priority).
+
+  <Note>
+  Using priorities has a slight performance impact. Only use if required.
+  </Note>
+
+  ```javascript
+  // High priority job
+  queue.add({ task: 'urgent' }, { priority: 1 });
+
+  // Low priority job
+  queue.add({ task: 'background' }, { priority: 100 });
+  ```
+</ParamField>
+
+### delay
+
+<ParamField path="delay" type="number">
+  Amount of milliseconds to wait before this job can be processed.
+
+  <Note>
+  For accurate delays, both server and clients should have synchronized clocks.
+  </Note>
+
+  ```javascript
+  // Process after 5 minutes
+  queue.add({ notification: 'reminder' }, {
+    delay: 5 * 60 * 1000
+  });
+
+  // Process after 1 hour
+  queue.add({ report: 'daily' }, {
+    delay: 60 * 60 * 1000
+  });
+  ```
+</ParamField>
+
+### attempts
+
+<ParamField path="attempts" type="number" default="1">
+  Total number of attempts to try the job until it completes.
+
+  ```javascript
+  queue.add({ email: 'welcome@example.com' }, {
+    attempts: 3 // Try up to 3 times before failing
+  });
+  ```
+
+  Use with `backoff` to configure retry delays.
+</ParamField>
+
+### backoff
+
+<ParamField path="backoff" type="number | BackoffOpts">
+  Backoff settings for automatic retries if the job fails. Requires `attempts` to be set.
+
+  ```typescript
+  interface BackoffOpts {
+    type: string; // 'fixed' or 'exponential' (or custom strategy)
+    delay: number; // Backoff delay in milliseconds
+    options?: any; // Options for custom strategies
+  }
+  ```
+
+  **Fixed backoff:**
+  ```javascript
+  queue.add(data, {
+    attempts: 5,
+    backoff: 3000 // Wait 3 seconds between retries
+  });
+  ```
+
+  **Exponential backoff:**
+  ```javascript
+  queue.add(data, {
+    attempts: 5,
+    backoff: {
+      type: 'exponential',
+      delay: 2000 // 2s, 4s, 8s, 16s, 32s
+    }
+  });
+  ```
+
+  **Custom backoff:**
+  ```javascript
+  // Define custom strategy in queue options
+  const queue = new Queue('myqueue', {
+    settings: {
+      backoffStrategies: {
+        jitter: function(attemptsMade, err) {
+          return 5000 + Math.random() * 500;
+        }
+      }
+    }
+  });
+
+  // Use custom strategy
+  queue.add(data, {
+    attempts: 3,
+    backoff: {
+      type: 'jitter'
+    }
+  });
+  ```
+</ParamField>
+
+### repeat
+
+<ParamField path="repeat" type="RepeatOpts">
+  Repeat job according to a cron specification or interval.
+
+  ```typescript
+  interface RepeatOpts {
+    cron?: string; // Cron string
+    tz?: string; // Timezone
+    startDate?: Date | string | number; // Start date
+    endDate?: Date | string | number; // End date
+    limit?: number; // Max number of repetitions
+    every?: number; // Repeat every N milliseconds
+    count?: number; // Start value for iteration count
+    readonly key?: string; // Metadata key in Redis
+  }
+  ```
+
+  **Cron-based repeating:**
+  ```javascript
+  // Every day at 3:15 AM
+  queue.add({ task: 'daily-report' }, {
+    repeat: {
+      cron: '15 3 * * *'
+    }
+  });
+
+  // Every 15 minutes
+  queue.add({ task: 'health-check' }, {
+    repeat: {
+      cron: '*/15 * * * *'
+    }
+  });
+
+  // With timezone
+  queue.add({ task: 'backup' }, {
+    repeat: {
+      cron: '0 2 * * *',
+      tz: 'America/New_York'
+    }
+  });
+  ```
+
+  **Interval-based repeating:**
+  ```javascript
+  // Every 5 seconds
+  queue.add({ task: 'monitor' }, {
+    repeat: {
+      every: 5000
+    }
+  });
+  ```
+
+  **With limits:**
+  ```javascript
+  // Run 10 times then stop
+  queue.add({ task: 'limited' }, {
+    repeat: {
+      every: 1000,
+      limit: 10
+    }
+  });
+
+  // Run until end date
+  queue.add({ task: 'campaign' }, {
+    repeat: {
+      cron: '0 9 * * *',
+      endDate: new Date('2026-12-31')
+    }
+  });
+  ```
+
+  <Note>
+  Jobs are scheduled "on the hour". A job with `cron: '*/15 * * * *'` created at 4:07 will first run at 4:15, then 4:30, etc.
+  </Note>
+
+  See [cron-parser](https://github.com/harrisiirak/cron-parser) for cron expression syntax.
+</ParamField>
+
+### lifo
+
+<ParamField path="lifo" type="boolean" default="false">
+  If true, adds the job to the right of the queue instead of the left (Last In First Out).
+
+  ```javascript
+  // Process most recent jobs first
+  queue.add({ task: 'latest' }, { lifo: true });
+  ```
+</ParamField>
+
+### timeout
+
+<ParamField path="timeout" type="number">
+  Number of milliseconds after which the job should fail with a timeout error.
+
+  <Warning>
+  Jobs are not proactively stopped after timeout. The job is marked as failed and the promise is rejected, but Bull cannot stop the processor function externally.
+  </Warning>
+
+  ```javascript
+  queue.add({ task: 'api-call' }, {
+    timeout: 30000 // Fail if not completed within 30 seconds
+  });
+  ```
+
+  **Handling timeouts in processor:**
+  ```javascript
+  queue.process(async (job) => {
+    const checkTimeout = setInterval(async () => {
+      const state = await job.getState();
+      if (state === 'failed') {
+        // Job timed out, clean up and exit
+        clearInterval(checkTimeout);
+        throw new Error('Job timed out');
+      }
+    }, 1000);
+
+    try {
+      const result = await doWork(job.data);
+      clearInterval(checkTimeout);
+      return result;
+    } catch (err) {
+      clearInterval(checkTimeout);
+      throw err;
+    }
+  });
+  ```
+</ParamField>
+
+### jobId
+
+<ParamField path="jobId" type="number | string">
+  Override the job ID. By default, the job ID is a unique integer.
+
+  <Warning>
+  You must ensure the jobId is unique. Adding a job with an existing ID will fail (unless it's a repeatable job with different repeat options).
+  </Warning>
+
+  ```javascript
+  queue.add({ user: 123 }, {
+    jobId: 'user-123-welcome'
+  });
+
+  // Idempotent job creation
+  queue.add({ task: 'import' }, {
+    jobId: 'import-2026-03-03'
+  });
+  ```
+
+  **Repeatable jobs and jobId:**
+  Repeatable jobs with the same `jobId` but different repeat configurations are considered different:
+  ```javascript
+  // Both will be created
+  await queue.add({}, { jobId: 'example', repeat: { every: 5000 } });
+  await queue.add({}, { jobId: 'example', repeat: { every: 10000 } });
+  ```
+</ParamField>
+
+### removeOnComplete
+
+<ParamField path="removeOnComplete" type="boolean | number | KeepJobs">
+  Control job retention after successful completion.
+
+  - `true` - Remove immediately after completion
+  - `false` - Keep in completed set (default)
+  - `number` - Keep only the last N completed jobs
+  - `KeepJobs` - Keep based on age and/or count
+
+  ```javascript
+  // Remove immediately
+  queue.add(data, {
+    removeOnComplete: true
+  });
+
+  // Keep last 100 completed jobs
+  queue.add(data, {
+    removeOnComplete: 100
+  });
+
+  // Keep jobs for 24 hours or max 1000 jobs
+  queue.add(data, {
+    removeOnComplete: {
+      age: 24 * 60 * 60, // 24 hours in seconds
+      count: 1000
+    }
+  });
+  ```
+
+  <Note>
+  This helps prevent Redis from running out of memory in high-volume queues.
+  </Note>
+</ParamField>
+
+### removeOnFail
+
+<ParamField path="removeOnFail" type="boolean | number | KeepJobs">
+  Control job retention after failure (after all attempts exhausted).
+
+  - `true` - Remove immediately after final failure
+  - `false` - Keep in failed set (default)
+  - `number` - Keep only the last N failed jobs
+  - `KeepJobs` - Keep based on age and/or count
+
+  ```javascript
+  // Keep failed jobs for debugging
+  queue.add(data, {
+    removeOnFail: false
+  });
+
+  // Keep last 50 failed jobs
+  queue.add(data, {
+    removeOnFail: 50
+  });
+
+  // Keep failed jobs for 7 days
+  queue.add(data, {
+    removeOnFail: {
+      age: 7 * 24 * 60 * 60, // 7 days in seconds
+      count: 5000
+    }
+  });
+  ```
+</ParamField>
+
+### stackTraceLimit
+
+<ParamField path="stackTraceLimit" type="number">
+  Limit the number of stack trace lines recorded when a job fails.
+
+  ```javascript
+  queue.add(data, {
+    stackTraceLimit: 10 // Only keep 10 lines of stack trace
+  });
+  ```
+</ParamField>
+
+## KeepJobs Interface
+
+```typescript
+interface KeepJobs {
+  age?: number; // Maximum age in seconds
+  count?: number; // Maximum count of jobs
+}
+```
+
+When both `age` and `count` are specified, jobs are kept if they satisfy both properties.
+
+```javascript
+queue.add(data, {
+  removeOnComplete: {
+    age: 3600, // Keep for 1 hour
+    count: 100 // AND keep max 100 jobs
+  }
+});
+```
+
+## Examples
+
+### Email Notification Job
+
+```javascript
+queue.add('send-email', {
+  to: 'user@example.com',
+  subject: 'Welcome!',
+  body: 'Thanks for signing up'
+}, {
+  attempts: 3,
+  backoff: {
+    type: 'exponential',
+    delay: 1000
+  },
+  removeOnComplete: true,
+  removeOnFail: 50
+});
+```
+
+### Delayed Reminder
+
+```javascript
+queue.add('reminder', {
+  userId: 123,
+  message: 'Your trial expires soon'
+}, {
+  delay: 7 * 24 * 60 * 60 * 1000, // 7 days
+  attempts: 2,
+  removeOnComplete: true
+});
+```
+
+### High Priority Job
+
+```javascript
+queue.add('urgent-task', {
+  type: 'critical-alert'
+}, {
+  priority: 1, // Highest priority
+  attempts: 5,
+  timeout: 10000, // 10 seconds
+  removeOnComplete: false // Keep for audit
+});
+```
+
+### Repeating Health Check
+
+```javascript
+queue.add('health-check', {
+  service: 'api'
+}, {
+  repeat: {
+    every: 60000 // Every minute
+  },
+  attempts: 2,
+  timeout: 5000
+});
+```
+
+### Daily Report
+
+```javascript
+queue.add('daily-report', {
+  type: 'sales'
+}, {
+  repeat: {
+    cron: '0 9 * * *', // 9 AM every day
+    tz: 'America/New_York'
+  },
+  jobId: 'daily-sales-report', // Prevent duplicates
+  attempts: 3,
+  removeOnComplete: {
+    age: 30 * 24 * 60 * 60, // Keep for 30 days
+    count: 100
+  }
+});
+```
+
+### Idempotent Job
+
+```javascript
+// Using jobId to prevent duplicate processing
+const userId = 123;
+const taskId = 'process-upload';
+
+queue.add({
+  userId,
+  file: 'document.pdf'
+}, {
+  jobId: `${taskId}-${userId}`,
+  removeOnComplete: true
+});
+
+// Calling again with same jobId won't create duplicate
+queue.add({
+  userId,
+  file: 'document.pdf'
+}, {
+  jobId: `${taskId}-${userId}`,
+  removeOnComplete: true
+});
+// ^ This will not create a new job
+```
+
+## Related
+
+- [Queue Options](/advanced/queue-options)
+- [Stalled Jobs](/advanced/stalled-jobs)
+- [Queue API Reference](/api/queue/constructor)

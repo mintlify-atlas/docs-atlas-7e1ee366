@@ -1,0 +1,577 @@
+---
+title: Troubleshooting
+description: Common issues and solutions when working with Bull queues
+---
+
+This guide covers common issues you might encounter when using Bull and their solutions.
+
+## Stalled Jobs
+
+### What Are Stalled Jobs?
+
+A job becomes "stalled" when Bull detects that a job is locked but not making progress. This happens when:
+
+1. The Node process running your job processor unexpectedly terminates
+2. Your job processor is CPU-intensive and blocks the event loop
+3. The lock expires before the job completes
+
+### Understanding Job Locks
+
+Bull uses Redis locks to ensure jobs are processed only once:
+
+- **lockDuration**: Time in milliseconds to hold the lock (default: 30000ms)
+- **lockRenewTime**: Interval to renew the lock (default: lockDuration / 2)
+
+If the lock expires before renewal, the job is marked as stalled and restarted.
+
+### Common Causes
+
+#### 1. CPU-Intensive Processing
+
+**Problem:** Job processor blocks the event loop, preventing lock renewal.
+
+```javascript
+// BAD: Blocks event loop
+queue.process(async (job) => {
+  for (let i = 0; i < 1000000000; i++) {
+    // Heavy computation
+  }
+});
+```
+
+**Solution:** Break work into smaller chunks or use a sandboxed processor:
+
+```javascript
+// GOOD: Sandboxed processor
+queue.process('./processor.js');
+
+// Or break into chunks
+queue.process(async (job) => {
+  for (let i = 0; i < 1000000000; i++) {
+    // Work
+    if (i % 100000 === 0) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+});
+```
+
+#### 2. Lock Duration Too Short
+
+**Problem:** Jobs take longer than the lock duration.
+
+**Solution:** Increase lock duration:
+
+```javascript
+const queue = new Queue('my-queue', {
+  settings: {
+    lockDuration: 60000, // 60 seconds
+    lockRenewTime: 30000, // Renew every 30 seconds
+  },
+});
+```
+
+#### 3. Process Crashes
+
+**Problem:** Worker process crashes while processing jobs.
+
+**Solution:** Implement proper error handling and process monitoring:
+
+```javascript
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
+  // Log to monitoring system
+  process.exit(1);
+});
+
+// Use process manager (PM2, systemd, etc.)
+```
+
+### Monitoring Stalled Jobs
+
+```javascript
+queue.on('stalled', (job) => {
+  console.error(`Job ${job.id} has stalled`);
+  // Alert monitoring system
+  monitoring.alert('STALLED_JOB', {
+    jobId: job.id,
+    attempts: job.attemptsMade,
+  });
+});
+```
+
+### Configuration
+
+```javascript
+const queue = new Queue('my-queue', {
+  settings: {
+    // Check for stalled jobs every 30 seconds
+    stalledInterval: 30000,
+    
+    // Maximum times a job can be restarted
+    maxStalledCount: 1,
+    
+    // Lock configuration
+    lockDuration: 30000,
+    lockRenewTime: 15000,
+  },
+});
+```
+
+---
+
+## Redis Connection Issues
+
+### Connection Failures
+
+#### Problem: Cannot Connect to Redis
+
+**Symptoms:**
+- `Error: connect ECONNREFUSED`
+- Queue methods hanging indefinitely
+- Jobs not processing
+
+**Solutions:**
+
+```javascript
+// 1. Verify Redis configuration
+const queue = new Queue('my-queue', {
+  redis: {
+    host: '127.0.0.1',
+    port: 6379,
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+  },
+});
+
+// 2. Check Redis is running
+// redis-cli ping
+
+// 3. Verify network connectivity
+// telnet localhost 6379
+
+// 4. Check authentication
+const queue = new Queue('my-queue', {
+  redis: {
+    host: '127.0.0.1',
+    port: 6379,
+    password: 'your-password',
+  },
+});
+```
+
+### Connection Drops
+
+**Problem:** Redis connections drop intermittently.
+
+**Solution:** Configure connection retry logic:
+
+```javascript
+const queue = new Queue('my-queue', {
+  redis: {
+    host: '127.0.0.1',
+    port: 6379,
+    retryStrategy: (times) => {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    },
+    reconnectOnError: (err) => {
+      const targetError = 'READONLY';
+      if (err.message.includes(targetError)) {
+        return true; // Reconnect
+      }
+      return false;
+    },
+  },
+});
+```
+
+### Redis Cluster Issues
+
+**Problem:** Bull doesn't work with Redis Cluster.
+
+**Solution:** Use hash tags in queue prefix:
+
+```javascript
+const queue = new Queue('my-queue', {
+  prefix: '{myapp}', // Hash tag ensures keys on same node
+});
+```
+
+### Connection Pooling
+
+**Problem:** Too many Redis connections.
+
+**Solution:** Reuse connections:
+
+```javascript
+const Redis = require('ioredis');
+
+let client, subscriber;
+
+const createClient = (type, config) => {
+  switch (type) {
+    case 'client':
+      if (!client) {
+        client = new Redis(config);
+      }
+      return client;
+    case 'subscriber':
+      if (!subscriber) {
+        subscriber = new Redis(config);
+      }
+      return subscriber;
+    case 'bclient':
+      return new Redis(config);
+    default:
+      throw new Error('Unknown connection type');
+  }
+};
+
+const queue = new Queue('my-queue', {
+  createClient,
+});
+```
+
+---
+
+## Memory Leaks
+
+### Job Data Accumulation
+
+**Problem:** Completed/failed jobs accumulating in Redis.
+
+**Solution:** Auto-remove completed jobs:
+
+```javascript
+// Remove on completion
+await queue.add(data, {
+  removeOnComplete: true,
+  removeOnFail: false,
+});
+
+// Keep only last N jobs
+await queue.add(data, {
+  removeOnComplete: 100, // Keep last 100
+  removeOnFail: 50,      // Keep last 50 failures
+});
+
+// Keep jobs for time period
+await queue.add(data, {
+  removeOnComplete: {
+    age: 3600, // Keep for 1 hour (in seconds)
+    count: 1000, // But at most 1000 jobs
+  },
+});
+```
+
+### Manual Cleanup
+
+```javascript
+// Clean old jobs periodically
+setInterval(async () => {
+  // Remove completed jobs older than 24 hours
+  await queue.clean(24 * 3600 * 1000, 'completed');
+  
+  // Remove failed jobs older than 7 days
+  await queue.clean(7 * 24 * 3600 * 1000, 'failed');
+}, 3600 * 1000); // Run every hour
+```
+
+### Event Listener Leaks
+
+**Problem:** Too many event listeners registered.
+
+**Solution:** Remove listeners when done:
+
+```javascript
+const handler = (job, result) => {
+  console.log('Job completed:', job.id);
+};
+
+queue.on('completed', handler);
+
+// Later, when shutting down:
+queue.off('completed', handler);
+```
+
+### Worker Process Memory
+
+**Problem:** Worker process memory grows over time.
+
+**Solution:** Use sandboxed processors or restart workers periodically:
+
+```javascript
+// Sandboxed processor (separate process)
+queue.process('./processor.js');
+
+// Or with PM2
+{
+  "name": "worker",
+  "script": "worker.js",
+  "max_memory_restart": "500M",
+  "instances": 4
+}
+```
+
+---
+
+## Lock Extension Failures
+
+### Problem: "Unable to renew lock" Errors
+
+**Symptoms:**
+```
+Error: Unable to renew nonexisting lock on job
+```
+
+**Causes:**
+1. Job taking longer than lock duration
+2. Redis connection issues
+3. High CPU usage blocking renewals
+
+**Solutions:**
+
+```javascript
+// 1. Increase lock duration
+const queue = new Queue('my-queue', {
+  settings: {
+    lockDuration: 60000,
+  },
+});
+
+// 2. Manually extend lock for long jobs
+queue.process(async (job) => {
+  await longRunningTask();
+  
+  // Extend lock before it expires
+  await job.extendLock(job.opts.lockDuration);
+  
+  await anotherLongTask();
+});
+
+// 3. Monitor lock extension failures
+queue.on('lock-extension-failed', (job, err) => {
+  console.error(`Failed to extend lock for job ${job.id}:`, err);
+});
+```
+
+---
+
+## Job Not Processing
+
+### Jobs Stuck in Waiting State
+
+**Checklist:**
+
+1. **Verify processor is registered:**
+```javascript
+queue.process(async (job) => {
+  // Processor code
+});
+```
+
+2. **Check queue is not paused:**
+```javascript
+const isPaused = await queue.isPaused();
+if (isPaused) {
+  await queue.resume();
+}
+```
+
+3. **Verify workers are running:**
+```javascript
+const workers = await queue.getWorkers();
+console.log(`Active workers: ${workers.length}`);
+```
+
+4. **Check for rate limiting:**
+```javascript
+// If you have rate limiting configured
+const queue = new Queue('my-queue', {
+  limiter: {
+    max: 10,
+    duration: 1000,
+  },
+});
+// Jobs may be delayed by rate limiter
+```
+
+### Named Jobs Not Processing
+
+**Problem:** Named jobs stay in waiting state.
+
+**Solution:** Register processor for that job name:
+
+```javascript
+// Adding named job
+queue.add('send-email', { to: 'user@example.com' });
+
+// Must register processor for this name
+queue.process('send-email', async (job) => {
+  // Process send-email jobs
+});
+
+// Or use wildcard processor
+queue.process('*', async (job) => {
+  // Process all named jobs
+  switch (job.name) {
+    case 'send-email':
+      // Handle email
+      break;
+    case 'process-image':
+      // Handle image
+      break;
+  }
+});
+```
+
+---
+
+## Rate Limiting Issues
+
+### Jobs Not Respecting Rate Limits
+
+**Problem:** More jobs processing than rate limit allows.
+
+**Cause:** Multiple workers/instances not sharing rate limit.
+
+**Solution:** Rate limits are global across all workers:
+
+```javascript
+const queue = new Queue('my-queue', {
+  limiter: {
+    max: 10,        // Max 10 jobs
+    duration: 1000, // Per 1 second
+  },
+});
+
+// Rate limit applies to all workers for this queue
+```
+
+### Rate Limit Delays
+
+**Problem:** Jobs delayed longer than expected.
+
+**Solution:** Configure bounce back:
+
+```javascript
+const queue = new Queue('my-queue', {
+  limiter: {
+    max: 10,
+    duration: 1000,
+    bounceBack: true, // Keep jobs in waiting, not delayed
+  },
+});
+```
+
+---
+
+## Debugging Tips
+
+### Enable Debug Logging
+
+```bash
+# Enable Bull debug logs
+export NODE_DEBUG=bull
+node app.js
+
+# Or in code
+DEBUG=bull node app.js
+```
+
+### Inspect Queue State
+
+```javascript
+const debug = async () => {
+  const counts = await queue.getJobCounts(
+    'waiting',
+    'active',
+    'completed',
+    'failed',
+    'delayed',
+    'paused'
+  );
+  
+  console.log('Queue state:', counts);
+  
+  // Get sample jobs
+  const waiting = await queue.getWaiting(0, 10);
+  const failed = await queue.getFailed(0, 10);
+  
+  console.log('Waiting jobs:', waiting.map(j => j.id));
+  console.log('Failed jobs:', failed.map(j => ({ id: j.id, error: j.failedReason })));
+};
+
+await debug();
+```
+
+### Check Job Details
+
+```javascript
+const job = await queue.getJob(jobId);
+
+console.log('Job state:', await job.getState());
+console.log('Job data:', job.data);
+console.log('Job progress:', job.progress);
+console.log('Attempts made:', job.attemptsMade);
+console.log('Failed reason:', job.failedReason);
+console.log('Stack trace:', job.stacktrace);
+```
+
+### Monitor Events
+
+```javascript
+// Log all events for debugging
+const events = [
+  'error',
+  'waiting',
+  'active',
+  'stalled',
+  'progress',
+  'completed',
+  'failed',
+  'paused',
+  'resumed',
+  'cleaned',
+  'drained',
+  'removed',
+];
+
+events.forEach((event) => {
+  queue.on(event, (...args) => {
+    console.log(`Event ${event}:`, args);
+  });
+});
+```
+
+---
+
+## Getting Help
+
+### Before Asking for Help
+
+1. Check this troubleshooting guide
+2. Review the [Queue API Reference](/api/queue/constructor)
+3. Search [GitHub issues](https://github.com/OptimalBits/bull/issues)
+4. Enable debug logging and collect relevant logs
+5. Create a minimal reproduction case
+
+### Where to Get Help
+
+- **GitHub Issues**: [OptimalBits/bull](https://github.com/OptimalBits/bull/issues)
+- **Gitter Chat**: [Bull Gitter](https://gitter.im/OptimalBits/bull)
+- **Stack Overflow**: Tag questions with `bull` and `node.js`
+- **Slack**: [BullMQ Slack](https://join.slack.com/t/bullmq/shared_invite/zt-1nbtpk6mv-TItWpF9jf3k4yrCaS0PPZA)
+
+### When Reporting Issues
+
+Include:
+- Bull version (`npm list bull`)
+- Node.js version (`node --version`)
+- Redis version (`redis-server --version`)
+- Minimal code to reproduce
+- Error messages and stack traces
+- Debug logs if applicable
+- What you've already tried

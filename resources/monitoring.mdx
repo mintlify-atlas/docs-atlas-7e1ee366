@@ -1,0 +1,358 @@
+---
+title: Monitoring & Metrics
+description: Monitor Bull queue health, performance, and set up alerting
+---
+
+Effective monitoring is crucial for maintaining healthy job queues in production. Bull provides several mechanisms for collecting metrics and monitoring queue health.
+
+## Built-in Metrics
+
+### Queue Metrics (Bull 4.7.0+)
+
+Bull includes built-in support for collecting queue metrics. Metrics are automatically collected when enabled in the queue configuration.
+
+**Enabling Metrics:**
+```javascript
+const queue = new Queue('my-queue', {
+  redis: {
+    host: '127.0.0.1',
+    port: 6379,
+  },
+  metrics: {
+    maxDataPoints: 100, // Max number of data points (default: 100)
+  },
+});
+```
+
+**Retrieving Metrics:**
+```javascript
+const metrics = await queue.getMetrics('completed');
+const metrics = await queue.getMetrics('failed');
+
+console.log(metrics);
+// {
+//   meta: { count: 100, prevTS: 1640000000, prevCount: 95 },
+//   data: [0, 5, 3, 2, 1, ...],
+//   count: 5
+// }
+```
+
+Metrics are collected with one-minute granularity and include:
+- **Completed jobs**: Number of jobs completed per minute
+- **Failed jobs**: Number of jobs failed per minute
+- **Historical data**: Time-series data for trend analysis
+
+---
+
+## Prometheus Integration
+
+### Bull Queue Exporter
+
+[Bull Queue Exporter](https://github.com/UpHabit/bull_exporter) is a Prometheus exporter for Bull queues that exposes queue metrics in Prometheus format.
+
+**Installation:**
+```bash
+npm install bull-exporter
+# or
+yarn add bull-exporter
+```
+
+**Basic Setup:**
+```javascript
+const { createBullMetrics } = require('bull-exporter');
+const express = require('express');
+const Bull = require('bull');
+
+const app = express();
+const queue = new Bull('my-queue');
+
+// Create metrics endpoint
+const metrics = createBullMetrics([queue]);
+
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', metrics.contentType);
+  res.send(await metrics.metrics());
+});
+
+app.listen(9100);
+```
+
+**Exposed Metrics:**
+- `bull_queue_waiting`: Number of jobs waiting to be processed
+- `bull_queue_active`: Number of jobs currently being processed
+- `bull_queue_delayed`: Number of delayed jobs
+- `bull_queue_failed`: Number of failed jobs
+- `bull_queue_completed`: Number of completed jobs
+- `bull_queue_paused`: Whether the queue is paused (0 or 1)
+
+### Prometheus Configuration
+
+Add a scrape target to your `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: 'bull-queues'
+    static_configs:
+      - targets: ['localhost:9100']
+```
+
+### Example Prometheus Queries
+
+**Rate of completed jobs:**
+```promql
+rate(bull_queue_completed[5m])
+```
+
+**Failed job rate:**
+```promql
+rate(bull_queue_failed[5m])
+```
+
+**Queue backlog:**
+```promql
+bull_queue_waiting + bull_queue_delayed
+```
+
+**Active workers:**
+```promql
+bull_queue_active
+```
+
+---
+
+## Key Metrics to Monitor
+
+### Queue Health Indicators
+
+#### 1. Queue Length
+Monitor the number of waiting and delayed jobs:
+
+```javascript
+const waiting = await queue.getWaitingCount();
+const delayed = await queue.getDelayedCount();
+const total = waiting + delayed;
+
+console.log(`Queue backlog: ${total} jobs`);
+```
+
+**Alert when:**
+- Queue length grows unbounded
+- Backlog exceeds a threshold (e.g., 10,000 jobs)
+- Queue growth rate is unusual
+
+#### 2. Processing Rate
+Track jobs completed per time period:
+
+```javascript
+const completed = await queue.getCompletedCount();
+const failed = await queue.getFailedCount();
+const throughput = completed / timeWindow;
+
+console.log(`Throughput: ${throughput} jobs/sec`);
+```
+
+**Alert when:**
+- Processing rate drops significantly
+- Completion rate < arrival rate (queue growing)
+- Zero throughput for extended period
+
+#### 3. Failure Rate
+Monitor the ratio of failed to completed jobs:
+
+```javascript
+const failureRate = failed / (completed + failed);
+
+console.log(`Failure rate: ${(failureRate * 100).toFixed(2)}%`);
+```
+
+**Alert when:**
+- Failure rate exceeds threshold (e.g., 5%)
+- Sudden spike in failures
+- Specific job types failing consistently
+
+#### 4. Active Jobs
+Track jobs currently being processed:
+
+```javascript
+const active = await queue.getActiveCount();
+const maxConcurrency = 10; // Your configured concurrency
+
+const utilization = active / maxConcurrency;
+console.log(`Worker utilization: ${(utilization * 100).toFixed(2)}%`);
+```
+
+**Alert when:**
+- Active jobs stuck at zero (workers not processing)
+- Active count exceeds expected concurrency
+- Low utilization despite large backlog
+
+#### 5. Job Duration
+Track how long jobs take to complete:
+
+```javascript
+queue.on('completed', (job, result) => {
+  const duration = Date.now() - job.processedOn;
+  console.log(`Job ${job.id} took ${duration}ms`);
+  
+  // Send to metrics system
+  metrics.recordJobDuration(job.name, duration);
+});
+```
+
+**Alert when:**
+- Jobs taking significantly longer than usual
+- Timeouts increasing
+- P95/P99 latency degrading
+
+---
+
+## Alerting Strategies
+
+### Critical Alerts
+
+These require immediate attention:
+
+1. **Queue Not Processing**
+   - No jobs completed in last 5 minutes
+   - All workers down
+   - Redis connection lost
+
+2. **High Failure Rate**
+   - >50% of jobs failing
+   - Sudden spike in failures
+   - Critical job type failing
+
+3. **Queue Overflow**
+   - Queue length exceeding capacity
+   - Memory pressure on Redis
+   - Approaching rate limits
+
+### Warning Alerts
+
+These indicate potential issues:
+
+1. **Growing Backlog**
+   - Queue length increasing over time
+   - Processing can't keep up with additions
+
+2. **Elevated Failure Rate**
+   - 5-50% of jobs failing
+   - Retry exhaustion increasing
+
+3. **Performance Degradation**
+   - Job duration increasing
+   - Worker utilization low despite backlog
+
+### Custom Monitoring
+
+```javascript
+const monitoring = {
+  async checkQueueHealth(queue) {
+    const counts = await queue.getJobCounts(
+      'waiting',
+      'active',
+      'completed',
+      'failed',
+      'delayed'
+    );
+    
+    // Check for anomalies
+    if (counts.waiting > 10000) {
+      await this.alert('HIGH_QUEUE_LENGTH', counts);
+    }
+    
+    if (counts.active === 0 && counts.waiting > 0) {
+      await this.alert('NO_ACTIVE_WORKERS', counts);
+    }
+    
+    const totalProcessed = counts.completed + counts.failed;
+    const failureRate = counts.failed / totalProcessed;
+    
+    if (failureRate > 0.05) {
+      await this.alert('HIGH_FAILURE_RATE', { failureRate, counts });
+    }
+    
+    return counts;
+  },
+  
+  async alert(type, data) {
+    console.error(`ALERT [${type}]:`, data);
+    // Send to alerting system (PagerDuty, Slack, etc.)
+  },
+};
+
+// Run health checks periodically
+setInterval(() => monitoring.checkQueueHealth(queue), 60000);
+```
+
+---
+
+## Event-Based Monitoring
+
+Listen to Bull events for real-time monitoring:
+
+```javascript
+// Track stalled jobs
+queue.on('stalled', (job) => {
+  console.error(`Job ${job.id} stalled`);
+  metrics.increment('jobs.stalled');
+});
+
+// Track failures
+queue.on('failed', (job, err) => {
+  console.error(`Job ${job.id} failed:`, err);
+  metrics.increment('jobs.failed', { jobType: job.name });
+});
+
+// Track completions
+queue.on('completed', (job, result) => {
+  const duration = Date.now() - job.processedOn;
+  metrics.timing('jobs.duration', duration, { jobType: job.name });
+});
+
+// Track errors
+queue.on('error', (error) => {
+  console.error('Queue error:', error);
+  metrics.increment('queue.errors');
+});
+```
+
+---
+
+## Dashboard Examples
+
+### Grafana Dashboard Panels
+
+1. **Queue Overview**
+   - Current queue length (gauge)
+   - Jobs processed (counter)
+   - Active workers (gauge)
+   - Failure rate (graph)
+
+2. **Performance Metrics**
+   - Job duration percentiles (P50, P95, P99)
+   - Throughput over time
+   - Worker utilization
+
+3. **Error Tracking**
+   - Failed jobs by type
+   - Stalled job count
+   - Error rate trends
+
+4. **Resource Usage**
+   - Redis memory usage
+   - CPU usage per worker
+   - Network I/O
+
+---
+
+## Best Practices
+
+1. **Set Baseline Metrics**: Understand normal behavior before setting alerts
+2. **Use Multiple Alert Levels**: Critical, warning, and info
+3. **Monitor Trends**: Look for gradual degradation, not just absolute values
+4. **Track Business Metrics**: Monitor job outcomes, not just technical metrics
+5. **Test Alerting**: Regularly verify alerts fire correctly
+6. **Document Runbooks**: Create procedures for common alert scenarios
+7. **Correlate Metrics**: Look at multiple signals together
+8. **Set Up Dashboards**: Create visualizations for quick troubleshooting

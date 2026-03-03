@@ -1,0 +1,367 @@
+---
+title: Repeatable Jobs
+description: Schedule jobs to run repeatedly using cron expressions or intervals with Bull
+---
+
+Repeatable jobs allow you to schedule jobs that execute on a recurring basis, either using cron expressions or simple intervals. This is perfect for periodic tasks like data synchronization, cleanup operations, or scheduled reports.
+
+## Basic Usage
+
+Add a repeatable job using the `repeat` option:
+
+```javascript
+const Queue = require('bull');
+const paymentsQueue = new Queue('payments');
+
+paymentsQueue.process(function (job) {
+  // Check payments
+  console.log('Processing payment check');
+});
+
+// Repeat payment job once every day at 3:15 (am)
+await paymentsQueue.add(
+  { type: 'daily-check' },
+  { repeat: { cron: '15 3 * * *' } }
+);
+```
+
+<Tip>
+Verify your cron expressions at [crontab.cronhub.io](https://crontab.cronhub.io) to ensure they're correct.
+</Tip>
+
+## Repeat Options
+
+The `RepeatOpts` interface provides flexible scheduling options:
+
+```typescript
+interface RepeatOpts {
+  cron?: string;                    // Cron expression
+  tz?: string;                      // Timezone
+  startDate?: Date | string | number; // Start date when the repeat job should start repeating
+  endDate?: Date | string | number;   // End date when the repeat job should stop repeating
+  limit?: number;                    // Number of times the job should repeat at max
+  every?: number;                    // Repeat every millis (cannot be used with cron)
+  count?: number;                    // The start value for the repeat iteration count
+  readonly key: string;              // The key for the repeatable job metadata in Redis
+}
+```
+
+## Scheduling Methods
+
+<Tabs>
+  <Tab title="Cron Expressions">
+    Use standard cron syntax for complex schedules:
+    
+    ```javascript
+    // Every day at midnight
+    await queue.add(data, { 
+      repeat: { cron: '0 0 * * *' } 
+    });
+    
+    // Every Monday at 9:00 AM
+    await queue.add(data, { 
+      repeat: { cron: '0 9 * * 1' } 
+    });
+    
+    // Every 15 minutes
+    await queue.add(data, { 
+      repeat: { cron: '*/15 * * * *' } 
+    });
+    
+    // First day of every month at 8:00 AM
+    await queue.add(data, { 
+      repeat: { cron: '0 8 1 * *' } 
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Simple Intervals">
+    Use the `every` option for simple recurring intervals:
+    
+    ```javascript
+    // Every 5 seconds
+    await queue.add(data, { 
+      repeat: { every: 5000 } 
+    });
+    
+    // Every 30 minutes
+    await queue.add(data, { 
+      repeat: { every: 30 * 60 * 1000 } 
+    });
+    
+    // Every hour
+    await queue.add(data, { 
+      repeat: { every: 3600000 } 
+    });
+    ```
+    
+    <Note>
+    The `cron` and `every` options cannot be used together. Choose one scheduling method.
+    </Note>
+  </Tab>
+  
+  <Tab title="With Timezone">
+    Specify a timezone for cron-based schedules:
+    
+    ```javascript
+    // 9 AM EST every weekday
+    await queue.add(data, {
+      repeat: {
+        cron: '0 9 * * 1-5',
+        tz: 'America/New_York'
+      }
+    });
+    
+    // Midnight Tokyo time
+    await queue.add(data, {
+      repeat: {
+        cron: '0 0 * * *',
+        tz: 'Asia/Tokyo'
+      }
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Advanced Scheduling
+
+### Start and End Dates
+
+Limit when a repeatable job runs:
+
+```javascript
+const startDate = new Date('2026-01-01');
+const endDate = new Date('2026-12-31');
+
+await queue.add(
+  { campaign: 'yearly-2026' },
+  {
+    repeat: {
+      cron: '0 9 * * *',     // Daily at 9 AM
+      startDate,              // Don't run before Jan 1, 2026
+      endDate                 // Stop after Dec 31, 2026
+    }
+  }
+);
+```
+
+### Limit Repetitions
+
+Limit how many times a job repeats:
+
+```javascript
+// Send reminder only 5 times
+await queue.add(
+  { type: 'reminder' },
+  {
+    repeat: {
+      every: 86400000,  // Once per day
+      limit: 5          // Stop after 5 executions
+    }
+  }
+);
+```
+
+## How Repeatable Jobs Work
+
+<Info>
+When you add a job with the `repeat` option, Bull:
+1. Creates a **Repeatable Job configuration** (metadata)
+2. Schedules a regular **delayed job** for the first run
+3. After each execution, schedules the next occurrence automatically
+</Info>
+
+### "On the Hour" Scheduling
+
+Repeatable jobs are scheduled "on the hour":
+
+```javascript
+// If created at 4:07 PM with a 15-minute interval
+await queue.add(data, { repeat: { cron: '*/15 * * * *' } });
+
+// First run: 4:15 PM (not 4:07)
+// Second run: 4:30 PM
+// Third run: 4:45 PM
+```
+
+With `startDate`, the job respects the start date but still aligns to the schedule:
+
+```javascript
+const startDate = new Date('2026-03-03T18:05:00Z');
+
+await queue.add(data, {
+  repeat: {
+    cron: '*/15 * * * *',
+    startDate
+  }
+});
+
+// First run: 6:15 PM (first interval after start date)
+// Not 6:05 PM
+```
+
+## Managing Repeatable Jobs
+
+### List All Repeatable Jobs
+
+```javascript
+const repeatableJobs = await queue.getRepeatableJobs();
+
+repeatableJobs.forEach(job => {
+  console.log('Job:', job.name);
+  console.log('Key:', job.key);
+  console.log('Cron:', job.cron);
+  console.log('Next run:', new Date(job.next));
+});
+```
+
+### Remove a Repeatable Job
+
+<Tabs>
+  <Tab title="By RepeatOpts">
+    Use the same repeat options that were used to create the job:
+    
+    ```javascript
+    // Create repeatable job
+    await queue.add(
+      'daily-report',
+      { type: 'report' },
+      { repeat: { cron: '0 9 * * *' } }
+    );
+    
+    // Remove it later
+    await queue.removeRepeatable('daily-report', { 
+      cron: '0 9 * * *' 
+    });
+    ```
+  </Tab>
+  
+  <Tab title="By Key">
+    Remove using the repeatable job's key:
+    
+    ```javascript
+    // Method 1: Store the key when creating
+    const job = await queue.add(
+      'remove-example',
+      { example: 'data' },
+      { repeat: { every: 1000 } }
+    );
+    const repeatableKey = job.opts.repeat.key;
+    
+    // Later, remove by key
+    await queue.removeRepeatableByKey(repeatableKey);
+    
+    // Method 2: Find the job and get its key
+    const repeatableJobs = await queue.getRepeatableJobs();
+    const foundJob = repeatableJobs.find(j => j.id === 'remove-example');
+    await queue.removeRepeatableByKey(foundJob.key);
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Removing a repeatable job only removes the configuration. Jobs already scheduled in the queue will still be processed. To remove those, use `queue.clean()` or manually remove them.
+</Warning>
+
+## Job ID Behavior
+
+Repeatable jobs have unique behavior with `jobId`:
+
+```javascript
+// These create different jobs
+await queue.add({}, { 
+  jobId: 'example', 
+  repeat: { every: 5000 } 
+});
+
+// Not created - same repeat configuration
+await queue.add({}, { 
+  jobId: 'example', 
+  repeat: { every: 5000 } 
+});
+
+// Created - different repeat configuration
+await queue.add({}, { 
+  jobId: 'example', 
+  repeat: { every: 10000 } 
+});
+
+// Created - no repeat (regular job)
+await queue.add({}, { 
+  jobId: 'example' 
+});
+
+// Not created - conflicts with previous regular job
+await queue.add({}, { 
+  jobId: 'example' 
+});
+```
+
+<Info>
+Repeat configurations are separate from regular jobs. The same `jobId` can be used for both a repeatable job and a regular job without conflicts.
+</Info>
+
+## Common Use Cases
+
+<Steps>
+  <Step title="Database Cleanup">
+    ```javascript
+    const cleanupQueue = new Queue('cleanup');
+    
+    // Clean old records every night at 2 AM
+    await cleanupQueue.add(
+      { table: 'old_logs' },
+      { repeat: { cron: '0 2 * * *' } }
+    );
+    ```
+  </Step>
+  
+  <Step title="Data Synchronization">
+    ```javascript
+    const syncQueue = new Queue('sync');
+    
+    // Sync with external API every 5 minutes
+    await syncQueue.add(
+      { source: 'external-api' },
+      { repeat: { every: 300000 } }
+    );
+    ```
+  </Step>
+  
+  <Step title="Report Generation">
+    ```javascript
+    const reportQueue = new Queue('reports');
+    
+    // Weekly report every Monday at 8 AM
+    await reportQueue.add(
+      { type: 'weekly-summary' },
+      { 
+        repeat: { 
+          cron: '0 8 * * 1',
+          tz: 'America/New_York'
+        } 
+      }
+    );
+    ```
+  </Step>
+</Steps>
+
+## Best Practices
+
+<Tip>
+**Use named jobs** for repeatable tasks to make them easier to manage and remove:
+
+```javascript
+await queue.add('daily-backup', data, { 
+  repeat: { cron: '0 1 * * *' } 
+});
+```
+</Tip>
+
+<Warning>
+**Monitor repeatable jobs**: Repeatable job configurations persist in Redis. Regularly audit with `getRepeatableJobs()` to remove unused configurations.
+</Warning>
+
+<Note>
+**Timezone considerations**: Always specify a timezone if your cron schedule depends on local time, especially for systems that may run in different regions.
+</Note>

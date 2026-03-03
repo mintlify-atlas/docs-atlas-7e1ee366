@@ -1,0 +1,212 @@
+---
+title: Queues
+description: Understanding Bull queues, Redis connections, and queue configuration
+---
+
+## Overview
+
+A Queue is the fundamental building block in Bull. It connects to Redis and manages the lifecycle of jobs from creation to completion. Each queue instance maintains six internal data structures in Redis to organize jobs by their state.
+
+## Queue Constructor
+
+The Queue constructor creates a new queue instance that persists in Redis:
+
+```typescript
+Queue(queueName: string, url?: string, opts?: QueueOptions): Queue
+```
+
+### Basic Usage
+
+```javascript
+const Queue = require('bull');
+
+const videoQueue = new Queue('video transcoding', 'redis://127.0.0.1:6379');
+const audioQueue = new Queue('audio transcoding', { 
+  redis: { port: 6379, host: '127.0.0.1', password: 'foobared' } 
+});
+const imageQueue = new Queue('image transcoding'); // Uses defaults
+```
+
+## Redis Connection
+
+### Connection String
+
+You can specify a Redis connection using a URL:
+
+```javascript
+const queue = new Queue('myqueue', 'redis://mypassword@myredis.server.com:1234');
+```
+
+### Connection Object
+
+Alternatively, pass Redis options as an object:
+
+```javascript
+const queue = new Queue('myqueue', {
+  redis: {
+    port: 6379,
+    host: '127.0.0.1',
+    db: 0,
+    password: 'your-password'
+  }
+});
+```
+
+### Default Connection
+
+From the source code (`~/workspace/source/lib/queue.js:129-136`):
+
+```javascript
+_.defaults(opts.redis, {
+  port: 6379,
+  host: '127.0.0.1',
+  db: opts.redis.db || opts.redis.DB,
+  retryStrategy: function(times) {
+    return Math.min(Math.exp(times), 20000);
+  }
+});
+```
+
+If not specified, Bull connects to Redis at `127.0.0.1:6379`.
+
+## Multiple Queues
+
+Queues are lightweight and cheap to create. You can create multiple queues for different job types:
+
+```javascript
+const emailQueue = new Queue('emails');
+const videoQueue = new Queue('videos');
+const imageQueue = new Queue('images');
+```
+
+<Note>
+Each queue instance creates new Redis connections. For better resource usage, consider reusing connections with the `createClient` option.
+</Note>
+
+## Queue Options
+
+The full queue options interface from the source:
+
+```typescript
+interface QueueOptions {
+  createClient?: (type: 'client' | 'subscriber' | 'bclient', config?: RedisOpts) => Redis;
+  limiter?: RateLimiter;
+  redis?: RedisOpts;
+  prefix?: string; // Default: 'bull'
+  metrics?: MetricsOpts;
+  defaultJobOptions?: JobOpts;
+  settings?: AdvancedSettings;
+}
+```
+
+### Key Options
+
+<ParamField path="prefix" type="string" default="bull">
+  Prefix for all queue keys in Redis
+</ParamField>
+
+<ParamField path="limiter" type="RateLimiter">
+  Rate limiting configuration for job processing
+  
+  ```typescript
+  interface RateLimiter {
+    max: number;      // Number of jobs
+    duration: number; // per duration milliseconds
+    groupKey?: string; // Group jobs by data key
+  }
+  ```
+</ParamField>
+
+<ParamField path="defaultJobOptions" type="JobOpts">
+  Default options applied to all jobs added to this queue
+</ParamField>
+
+<ParamField path="settings" type="AdvancedSettings">
+  Advanced queue settings for fine-tuning behavior
+</ParamField>
+
+## Internal Data Structures
+
+From the source code (`~/workspace/source/lib/queue.js:27-42`), Bull maintains six Redis data structures:
+
+```javascript
+/**
+  The Queue keeps 6 data structures:
+    - wait (list)
+    - active (list)
+    - delayed (zset)
+    - priority (zset)
+    - completed (zset)
+    - failed (zset)
+
+        --> priorities      -- > completed
+       /     |            /
+    job -> wait -> active
+       \     ^            \
+        v    |             -- > failed
+        delayed
+*/
+```
+
+- **wait**: Jobs waiting to be processed (FIFO list)
+- **active**: Jobs currently being processed (list)
+- **delayed**: Jobs scheduled for future processing (sorted set by timestamp)
+- **priority**: Jobs with priority values (sorted set)
+- **completed**: Successfully finished jobs (sorted set)
+- **failed**: Jobs that failed after all retry attempts (sorted set)
+
+## Advanced Settings
+
+```typescript
+interface AdvancedSettings {
+  lockDuration: number;      // Default: 30000ms
+  lockRenewTime: number;     // Default: lockDuration / 2
+  stalledInterval: number;   // Default: 30000ms
+  maxStalledCount: number;   // Default: 1
+  guardInterval: number;     // Default: 5000ms
+  retryProcessDelay: number; // Default: 5000ms
+  drainDelay: number;        // Default: 5ms
+  backoffStrategies: {};     // Custom backoff strategies
+  isSharedChildPool: boolean; // Default: false
+}
+```
+
+### Example with Advanced Settings
+
+```javascript
+const queue = new Queue('myqueue', {
+  settings: {
+    lockDuration: 60000,    // Extend lock to 60 seconds
+    stalledInterval: 60000,  // Check for stalled jobs every 60 seconds
+    maxStalledCount: 2      // Retry stalled jobs up to 2 times
+  }
+});
+```
+
+<Warning>
+  Do not override advanced settings unless you understand the internals of the queue. Incorrect settings can lead to jobs being processed multiple times or becoming permanently stuck.
+</Warning>
+
+## Rate Limiting
+
+Limit the number of jobs processed in a time window:
+
+```javascript
+const queue = new Queue('api-calls', {
+  limiter: {
+    max: 100,      // Maximum 100 jobs
+    duration: 5000  // per 5 seconds
+  }
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Jobs" icon="briefcase" href="/concepts/jobs">
+    Learn how to create and manage jobs
+  </Card>
+  <Card title="Processors" icon="gear" href="/concepts/processors">
+    Define functions to process queue jobs
+  </Card>
+</CardGroup>
