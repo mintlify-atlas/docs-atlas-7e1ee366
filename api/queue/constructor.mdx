@@ -239,3 +239,56 @@ When running multiple concurrent workers with delayed tasks, set this value much
 ### Max Stalled Count
 
 Set this higher if stalled jobs are common (e.g., processes crash frequently) and it's generally acceptable to double-process jobs.
+
+---
+
+## Queue.isReady()
+
+Returns a promise that resolves when the queue is ready to accept jobs. This is useful when you need to ensure the queue has finished initializing before adding jobs.
+
+### Signature
+
+```ts
+isReady(): Promise<Queue>
+```
+
+### Returns
+
+<ResponseField name="queue" type="Promise<Queue>">
+  A promise that resolves to the Queue instance when ready.
+</ResponseField>
+
+### Example
+
+```js
+const queue = new Queue('myqueue', { redis: { port: 6379 }});
+
+// Wait for queue to be ready before adding jobs
+await queue.isReady();
+
+// Now safe to add jobs
+await queue.add({ data: 'value' });
+```
+
+### Usage in Initialization
+
+```js
+async function initializeQueue() {
+  const queue = new Queue('myqueue');
+  
+  // Wait for Redis connection to be established
+  await queue.isReady();
+  
+  // Set up processors
+  queue.process(async (job) => {
+    return processJob(job);
+  });
+  
+  console.log('Queue is ready');
+  return queue;
+}
+```
+
+<Note>
+  Most of the time you don't need to call `isReady()` explicitly, as methods like `add()` and `process()` will wait for the queue to be ready internally.
+</Note>

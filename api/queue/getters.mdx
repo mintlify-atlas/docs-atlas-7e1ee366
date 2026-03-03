@@ -371,6 +371,69 @@ getPausedCount(): Promise<number>
 
 ---
 
+### Queue.getCountsPerPriority()
+
+Returns job counts grouped by priority level.
+
+#### Signature
+
+```ts
+getCountsPerPriority(priorities: number[]): Promise<{ [priority: number]: number }>
+```
+
+#### Parameters
+
+<ParamField path="priorities" type="number[]" required>
+  Array of priority values to get counts for.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="counts" type="object">
+  Object mapping priority values to job counts.
+</ResponseField>
+
+#### Example
+
+```js
+// Get counts for specific priorities
+const counts = await queue.getCountsPerPriority([1, 2, 3, 4, 5]);
+
+console.log(counts);
+// { 1: 10, 2: 25, 3: 50, 4: 15, 5: 5 }
+
+// Calculate total high priority jobs (1-2)
+const highPriority = counts[1] + counts[2];
+console.log(`${highPriority} high priority jobs`);
+```
+
+#### Priority Distribution
+
+```js
+async function getPriorityDistribution() {
+  const priorities = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const counts = await queue.getCountsPerPriority(priorities);
+  
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  
+  const distribution = {};
+  for (const [priority, count] of Object.entries(counts)) {
+    distribution[priority] = {
+      count,
+      percentage: ((count / total) * 100).toFixed(2) + '%'
+    };
+  }
+  
+  return distribution;
+}
+```
+
+<Note>
+  This method only returns counts for jobs that have priority set. Jobs without priority are not included in the results.
+</Note>
+
+---
+
 ## Additional Getters
 
 ### Queue.getWorkers()

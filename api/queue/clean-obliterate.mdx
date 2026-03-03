@@ -101,6 +101,77 @@ await cleanOldJobs(24 * 60 * 60 * 1000); // 24 hours
 
 ---
 
+## Queue.removeJobs()
+
+Removes all jobs whose jobId matches the given pattern.
+
+### Signature
+
+```ts
+removeJobs(pattern: string): Promise<void>
+```
+
+### Parameters
+
+<ParamField path="pattern" type="string" required>
+  Redis glob-style pattern to match job IDs. See [Redis KEYS command](https://redis.io/commands/keys) for pattern syntax.
+</ParamField>
+
+### Returns
+
+<ResponseField name="promise" type="Promise<void>">
+  A promise that resolves when the matching jobs have been removed.
+</ResponseField>
+
+### Pattern Syntax
+
+- `?` - Matches exactly one character
+- `*` - Matches any number of characters
+- `[abc]` - Matches one character from the set
+- `[^abc]` - Matches one character not in the set
+- `[a-z]` - Matches one character in the range
+
+### Examples
+
+#### Remove Specific Job Patterns
+
+```js
+// Remove jobs starting with "foo"
+await queue.removeJobs('foo*');
+
+// Remove jobs with single character + "oo"
+await queue.removeJobs('?oo*');
+
+// Remove jobs ending with numbers
+await queue.removeJobs('*[0-9]');
+```
+
+#### Remove Jobs by User
+
+```js
+// Assuming jobIds include user IDs
+await queue.removeJobs('user-123-*');
+console.log('Removed all jobs for user 123');
+```
+
+#### Remove Test Jobs
+
+```js
+// Clean up test jobs
+await queue.removeJobs('test-*');
+await queue.removeJobs('*-test');
+```
+
+<Note>
+  This method does not affect Repeatable Job configurations. To remove repeatable jobs, use `removeRepeatable()` or `removeRepeatableByKey()`.
+</Note>
+
+<Warning>
+  Pattern matching uses the Redis KEYS command which can be slow on large queues. Use with caution in production.
+</Warning>
+
+---
+
 ## Queue.empty()
 
 Drains the queue by deleting all waiting and delayed jobs.

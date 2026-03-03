@@ -130,3 +130,112 @@ Jobs also contain other useful properties for tracking state:
 - `job.stacktrace`: Array of stack traces from failed attempts
 - `job.returnvalue`: The return value from a completed job
 - `job.name`: The job type name (if provided to `Queue#add()`)
+
+---
+
+## toJSON()
+
+```ts
+toJSON(): object
+```
+
+Serializes the job to a plain JavaScript object. This is useful for storing or transmitting job data.
+
+<ResponseField name="json" type="object">
+  Object containing all job properties:
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="JobId">
+      Job identifier
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Job type name
+    </ResponseField>
+    <ResponseField name="data" type="any">
+      Job payload data
+    </ResponseField>
+    <ResponseField name="opts" type="JobOptions">
+      Job options
+    </ResponseField>
+    <ResponseField name="progress" type="number">
+      Current progress value
+    </ResponseField>
+    <ResponseField name="delay" type="number">
+      Delay in milliseconds
+    </ResponseField>
+    <ResponseField name="timestamp" type="number">
+      Creation timestamp
+    </ResponseField>
+    <ResponseField name="attemptsMade" type="number">
+      Number of failed attempts
+    </ResponseField>
+    <ResponseField name="failedReason" type="any">
+      Failure reason if failed
+    </ResponseField>
+    <ResponseField name="stacktrace" type="string[] | null">
+      Stack traces from failures
+    </ResponseField>
+    <ResponseField name="returnvalue" type="any">
+      Return value if completed
+    </ResponseField>
+    <ResponseField name="finishedOn" type="number | null">
+      Completion timestamp
+    </ResponseField>
+    <ResponseField name="processedOn" type="number | null">
+      Last processing timestamp
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Serializing Jobs
+
+```javascript
+const job = await queue.add({ user: 'john', action: 'send-email' });
+const jobJSON = job.toJSON();
+
+console.log(jobJSON);
+// {
+//   id: '123',
+//   name: '__default__',
+//   data: { user: 'john', action: 'send-email' },
+//   opts: { attempts: 1, delay: 0, ... },
+//   progress: 0,
+//   delay: 0,
+//   timestamp: 1234567890,
+//   attemptsMade: 0,
+//   failedReason: null,
+//   stacktrace: null,
+//   returnvalue: null,
+//   finishedOn: null,
+//   processedOn: null
+// }
+```
+
+### Storing Job State
+
+```javascript
+// Save job state to database
+const job = await queue.getJob(jobId);
+const jobSnapshot = job.toJSON();
+
+await database.save('job_snapshots', {
+  jobId: job.id,
+  snapshot: jobSnapshot,
+  savedAt: new Date()
+});
+```
+
+### API Response
+
+```javascript
+app.get('/api/jobs/:id', async (req, res) => {
+  const job = await queue.getJob(req.params.id);
+  
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+  
+  // Return job as JSON
+  res.json(job.toJSON());
+});
+```
